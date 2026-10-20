@@ -1,3 +1,4 @@
+
 const express = require("express");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -5,6 +6,7 @@ const session = require("express-session");
 const connectPgSimple = require("connect-pg-simple");
 const pool = require("./db");
 const authRoutes = require("./routes/auth");
+const testRoutes = require("./routes/test");
 
 const app = express();
 
@@ -45,6 +47,9 @@ app.use(
 
 // Authentication routes
 app.use("/api/auth", authRoutes);
+
+// Authorization test routes
+app.use("/api/test", testRoutes);
 
 // Root route
 app.get("/", (req, res) => {
