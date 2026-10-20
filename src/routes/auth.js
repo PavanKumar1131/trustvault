@@ -1,13 +1,14 @@
+
 const express = require("express");
 const bcrypt = require("bcrypt");
 const pool = require("../db");
 
 const router = express.Router();
 
-// Register
+// Register new users as viewers. Never accept a role from public input.
 router.post("/register", async (req, res) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, email, password } = req.body || {};
 
         if (
             typeof name !== "string" ||
@@ -28,7 +29,10 @@ router.post("/register", async (req, res) => {
             });
         }
 
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        if (
+            cleanEmail.length > 255 ||
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)
+        ) {
             return res.status(400).json({
                 message: "Enter a valid email address"
             });
@@ -43,8 +47,8 @@ router.post("/register", async (req, res) => {
         const passwordHash = await bcrypt.hash(password, 12);
 
         const result = await pool.query(
-            `INSERT INTO users (name, email, password_hash)
-             VALUES ($1, $2, $3)
+            `INSERT INTO users (name, email, password_hash, role)
+             VALUES ($1, $2, $3, 'viewer')
              ON CONFLICT DO NOTHING
              RETURNING id, name, email, role, created_at`,
             [cleanName, cleanEmail, passwordHash]
@@ -71,7 +75,7 @@ router.post("/register", async (req, res) => {
 // Login
 router.post("/login", async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password } = req.body || {};
 
         if (
             typeof email !== "string" ||
@@ -109,7 +113,6 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // Prevent session fixation by regenerating the session ID.
         req.session.regenerate((error) => {
             if (error) {
                 console.error("Session regeneration failed:", error.message);

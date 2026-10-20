@@ -7,6 +7,7 @@ const connectPgSimple = require("connect-pg-simple");
 const pool = require("./db");
 const authRoutes = require("./routes/auth");
 const testRoutes = require("./routes/test");
+const documentRoutes = require("./routes/documents");
 
 const app = express();
 
@@ -22,7 +23,6 @@ app.use(
   })
 );
 
-// PostgreSQL session store
 const PgSession = connectPgSimple(session);
 
 app.use(
@@ -45,11 +45,10 @@ app.use(
   })
 );
 
-// Authentication routes
+// API routes
 app.use("/api/auth", authRoutes);
-
-// Authorization test routes
 app.use("/api/test", testRoutes);
+app.use("/api/documents", documentRoutes);
 
 // Root route
 app.get("/", (req, res) => {

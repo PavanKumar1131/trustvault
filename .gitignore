@@ -6,3 +6,19 @@ uploads/
 storage/
 coverage/
 *.log
+# Environment secrets
+.env
+.env.*
+
+# Session cookies and local test artifacts
+cookies.txt
+second-cookies.txt
+downloaded-test*.pdf
+unauthorized-download.pdf
+test-document.pdf
+test-upload.txt
+
+# Private uploaded documents
+uploads/
+# Local authentication test sessions
+roletest-cookies.txt
