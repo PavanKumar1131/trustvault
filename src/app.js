@@ -1,13 +1,14 @@
-
 const express = require("express");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const session = require("express-session");
+const connectPgSimple = require("connect-pg-simple");
 const pool = require("./db");
+const authRoutes = require("./routes/auth");
 
 const app = express();
 
 app.use(helmet());
-
 app.use(express.json({ limit: "1mb" }));
 
 app.use(
@@ -19,6 +20,37 @@ app.use(
   })
 );
 
+// PostgreSQL session store
+const PgSession = connectPgSimple(session);
+
+app.use(
+  session({
+    store: new PgSession({
+      pool,
+      tableName: "user_sessions",
+      createTableIfMissing: true,
+    }),
+    name: "trustvault.sid",
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 1000 * 60 * 60 * 8,
+    },
+  })
+);
+
+// Authentication routes
+app.use("/api/auth", authRoutes);
+
+// Root route
+app.get("/", (req, res) => {
+  res.send("Welcome to TrustVault API!");
+});
+
 // Application health check
 app.get("/api/health", (req, res) => {
   res.json({
@@ -28,7 +60,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// PostgreSQL database health check
+// Database health check
 app.get("/api/health/db", async (req, res) => {
   try {
     const result = await pool.query("SELECT NOW() AS database_time");
