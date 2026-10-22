@@ -1,18 +1,16 @@
 node_modules/
-.env
-.env.*
-!.env.example
-uploads/
-storage/
 coverage/
 *.log
+
 # Environment secrets
 .env
 .env.*
+!.env.example
 
 # Session cookies and local test artifacts
 cookies.txt
 second-cookies.txt
+roletest-cookies.txt
 downloaded-test*.pdf
 unauthorized-download.pdf
 test-document.pdf
@@ -20,5 +18,12 @@ test-upload.txt
 
 # Private uploaded documents
 uploads/
-# Local authentication test sessions
-roletest-cookies.txt
+storage/
+
+# Isolated test working directory (test uploads, temporary artefacts)
+.tmp/
+
+# Generated UI design extraction (page renders + spec). Source PDFs are kept.
+designs/_extracted/
+
+scratch/
