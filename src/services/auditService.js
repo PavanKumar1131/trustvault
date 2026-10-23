@@ -326,8 +326,8 @@ async function writeAuditLog(
  *  - deleted rows in the middle of the chain
  *  - truncation of the tail (the head no longer matches the anchor table)
  */
-async function verifyAuditChain() {
-    const result = await pool.query(
+async function verifyAuditChain(db = pool) {
+    const result = await db.query(
         `SELECT id, actor_id, document_id, target_user_id, action, outcome,
                 details, prev_hash, entry_hash, created_at
          FROM audit_logs
@@ -353,7 +353,7 @@ async function verifyAuditChain() {
             // Check if an authorized integrity incident annotation documents this break
             let annotation = null;
             try {
-                const annRes = await pool.query(
+                const annRes = await db.query(
                     "SELECT * FROM audit_incident_annotations WHERE broken_at_id = $1 LIMIT 1",
                     [row.id]
                 );
@@ -456,7 +456,7 @@ async function verifyAuditChain() {
     // detect rows that were removed from the end of the log.
     let anchor = null;
     try {
-        const state = await pool.query(
+        const state = await db.query(
             "SELECT last_entry_id, last_hash FROM audit_chain_state WHERE id = 1"
         );
         anchor = state.rows[0] || null;

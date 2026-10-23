@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="TrustVault — Secure document management with tamper-evident audit trails and granular access control.">
+    <title>TrustVault</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/styles.css?v=4.0">
+</head>
+<body>
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         AUTH SCREEN — split panel: dark navy brand panel + white form panel
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div id="auth-screen" class="auth-screen">
+        <div class="auth-layout">
+
+            <!-- Left: brand panel (dark navy) -->
+            <aside class="auth-panel-brand" aria-label="TrustVault Overview">
+                <div class="auth-brand-top">
+                    <div class="auth-brand">
+                        <div class="auth-logo">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        </div>
+                        <h1>TrustVault</h1>
+                        <p class="auth-subtitle">Secure document management</p>
+                    </div>
+
+                    <div class="auth-hero">
+                        <h2 class="auth-headline">Every open is recorded.<br>Every refusal too.</h2>
+                        <p class="auth-support">Only people you grant can read a document, and access ends the moment you take it back.</p>
+                    </div>
+
+                    <ul class="auth-points">
+                        <li>Tamper-evident audit trail on every action</li>
+                        <li>Read and Edit grants per document</li>
+                        <li>Owners keep full control of sharing and deletion</li>
+                    </ul>
+                </div>
+
+                <div class="auth-brand-footer">
+                    <p>Access is decided on the server for every request.</p>
+                </div>
+            </aside>
+
+            <!-- Right: form panel (white) -->
+            <div class="auth-panel-form">
+                <div class="auth-form-container">
+                    <!-- The sign-in states of the v3 designs: an ended session and
+                         a disabled account are banners, not form errors. -->
+                    <div id="auth-banner" class="auth-banner hidden" role="alert" aria-live="assertive">
+                        <span id="auth-banner-text"></span>
+                    </div>
+
+                    <div class="auth-tabs" role="tablist" aria-label="Authentication">
+                        <button type="button" class="auth-tab active" id="auth-tab-login" role="tab" aria-selected="true" aria-controls="login-form">Sign in</button>
+                        <button type="button" class="auth-tab" id="auth-tab-register" role="tab" aria-selected="false" aria-controls="register-form">Create account</button>
+                    </div>
+
+                    <!-- Login form -->
+                    <form id="login-form" class="auth-form" role="tabpanel" aria-labelledby="auth-tab-login" autocomplete="on" novalidate>
+                        <h2>Sign in to your account</h2>
+                        <div id="login-error" class="form-error hidden" role="alert"></div>
+                        <div class="form-group">
+                            <label for="login-email">Email address</label>
+                            <input type="email" id="login-email" name="email" required autocomplete="email" placeholder="you@company.com">
+                            <p class="field-error hidden" id="login-email-error" aria-live="polite"></p>
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
+                            <input type="password" id="login-password" name="password" required autocomplete="current-password" placeholder="Enter your password">
+                            <p class="field-error hidden" id="login-password-error" aria-live="polite"></p>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-full" id="login-btn">Sign in</button>
+                        <p class="auth-switch">Don't have an account? <button type="button" class="link-button" id="show-register">Create one</button></p>
+                    </form>
+
+                    <!-- Register form — deliberately offers NO role choice.
+                         Every new account starts as a Viewer; an administrator can
+                         change the role later from the Admin console. -->
+                    <form id="register-form" class="auth-form hidden" role="tabpanel" aria-labelledby="auth-tab-register" autocomplete="on" novalidate>
+                        <h2>Create your account</h2>
+                        <div id="register-error" class="form-error hidden" role="alert"></div>
+                        <div id="register-success" class="form-success hidden" role="status"></div>
+                        <div class="form-group">
+                            <label for="register-name">Full name</label>
+                            <input type="text" id="register-name" name="name" required autocomplete="name" placeholder="Jane Smith" maxlength="100">
+                            <p class="field-error hidden" id="register-name-error" aria-live="polite"></p>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-email">Email address</label>
+                            <input type="email" id="register-email" name="email" required autocomplete="email" placeholder="you@company.com">
+                            <p class="field-error hidden" id="register-email-error" aria-live="polite"></p>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password">Password</label>
+                            <input type="password" id="register-password" name="password" required autocomplete="new-password" placeholder="Min. 12 characters" minlength="12" maxlength="72">
+                            <p class="field-error hidden" id="register-password-error" aria-live="polite"></p>
+                            <p class="form-hint">Use at least 12 characters.</p>
+                        </div>
+                        <p class="form-note">
+                            New accounts start as <strong>Viewer</strong>. An administrator can change the role later.
+                        </p>
+                        <button type="submit" class="btn btn-primary btn-full" id="register-btn">Create account</button>
+                        <p class="auth-switch">Already have an account? <button type="button" class="link-button" id="show-login">Sign in</button></p>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         APPLICATION SHELL
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div id="app-shell" class="app-shell hidden">
+
+        <!-- Sidebar (dark navy) -->
+        <aside id="sidebar" class="sidebar">
+            <div class="sidebar-brand">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <span>TrustVault</span>
+            </div>
+
+            <nav class="sidebar-nav" aria-label="Main">
+                <!-- data-roles lists the server role values that may see the item. -->
+                <a href="#" class="nav-item" data-view="dashboard" data-roles="admin,document_owner" id="nav-dashboard" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-view="documents" data-roles="document_owner" id="nav-documents" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <span>My documents</span>
+                </a>
+                <a href="#" class="nav-item" data-view="shared" data-roles="admin,document_owner,viewer" id="nav-shared" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Shared with me</span>
+                </a>
+                <a href="#" class="nav-item" data-view="upload" data-roles="document_owner" id="nav-upload" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <span>Upload</span>
+                </a>
+                <a href="#" class="nav-item" data-view="search" data-roles="admin,document_owner,viewer" id="nav-search" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <span>Search</span>
+                </a>
+
+                <!-- Admin-only section -->
+                <div class="nav-section-header hidden" id="nav-section-admin">ADMIN ONLY</div>
+                <a href="#" class="nav-item" data-view="admin-audit" data-roles="admin" id="nav-admin-audit" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <span>Audit log</span>
+                </a>
+                <a href="#" class="nav-item" data-view="admin-users" data-roles="admin" id="nav-admin-users" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Users</span>
+                </a>
+            </nav>
+
+            <!-- Sidebar footer — account block (rule #1: "Signed in as" + "Role: X") -->
+            <div class="sidebar-footer">
+                <div class="sidebar-user" id="sidebar-user">
+                    <div class="user-avatar" id="user-avatar-char" aria-hidden="true">U</div>
+                    <div class="user-info">
+                        <span class="user-signed-in">Signed in as</span>
+                        <span class="user-email" id="sidebar-user-email">you@company.com</span>
+                        <span class="user-role" id="sidebar-role">Role: Viewer</span>
+                    </div>
+                </div>
+                <div class="sidebar-actions">
+                    <button type="button" class="btn-icon" id="btn-account" title="Account" aria-label="Account settings">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </button>
+                    <button type="button" class="btn-icon" id="logout-btn" title="Sign out" aria-label="Sign out">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main id="main-content" class="main-content">
+
+            <!-- The page level state banner of the v3 designs: a failed
+                 download, a refused replacement, a saved change or an ended
+                 session. It sits above every screen. -->
+            <div id="app-banner" class="app-banner hidden" role="status" aria-live="polite">
+                <span id="app-banner-text" class="app-banner-text"></span>
+                <button type="button" class="app-banner-close" id="app-banner-close" aria-label="Dismiss this message">&times;</button>
+            </div>
+
+            <!-- ═══════════ DASHBOARD ═══════════ -->
+            <section id="view-dashboard" class="view" aria-labelledby="dash-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="dash-title">Dashboard</h1>
+                        <p class="view-desc" id="dash-desc">Overview</p>
+                    </div>
+                    <button class="btn btn-primary hidden" id="btn-dash-upload">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Upload document
+                    </button>
+                </div>
+
+                <!-- Owner dashboard -->
+                <div id="dash-owner">
+                    <div class="stats-grid">
+                        <div class="card stat-card">
+                            <div class="stat-value" id="owner-stat-owned">—</div>
+                            <div class="stat-label">My documents</div>
+                        </div>
+                        <div class="card stat-card">
+                            <div class="stat-value" id="owner-stat-shared-out">—</div>
+                            <div class="stat-label">Shared with others</div>
+                        </div>
+                        <div class="card stat-card">
+                            <div class="stat-value" id="owner-stat-shared-in">—</div>
+                            <div class="stat-label">Shared with me</div>
+                        </div>
+                        <div class="card stat-card">
+                            <div class="stat-value" id="owner-stat-refused">—</div>
+                            <div class="stat-label">Refused attempts on my files</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header-row">
+                            <h3>Recent activity on your documents</h3>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table compact" id="owner-activity-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">When</th>
+                                        <th scope="col">Who</th>
+                                        <th scope="col">Action</th>
+                                        <th scope="col">Document</th>
+                                        <th scope="col">Result</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="owner-activity-tbody">
+                                    <tr><td colspan="5" class="empty-state">Loading activity…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Admin dashboard -->
+                <div id="dash-admin" class="hidden">
+                    <div class="stats-grid">
+                        <div class="card stat-card">
+                            <div class="stat-value" id="admin-stat-users">—</div>
+                            <div class="stat-label">Users</div>
+                        </div>
+                        <div class="card stat-card">
+                            <div class="stat-value" id="admin-stat-documents">—</div>
+                            <div class="stat-label">Documents</div>
+                        </div>
+                        <div class="card stat-card">
+                            <div class="stat-value" id="admin-stat-perm-today">—</div>
+                            <div class="stat-label">Permission changes today</div>
+                        </div>
+                        <div class="card stat-card">
+                            <div class="stat-value" id="admin-stat-denied-today">—</div>
+                            <div class="stat-label">Refused attempts today</div>
+                        </div>
+                    </div>
+
+                    <div class="card" id="admin-chain-card">
+                        <div class="card-header-row">
+                            <div>
+                                <h3>Audit Chain Integrity</h3>
+                                <p class="card-subtitle">Cryptographic hash chain over every immutable system log</p>
+                            </div>
+                            <button class="btn btn-sm btn-ghost" id="btn-verify-chain-dash" type="button">Verify now</button>
+                        </div>
+                        <div id="admin-chain-status" class="chain-status-box" aria-live="polite"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header-row">
+                            <h3>Latest events</h3>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table compact" id="admin-latest-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">When</th>
+                                        <th scope="col">User</th>
+                                        <th scope="col">Action</th>
+                                        <th scope="col">Document</th>
+                                        <th scope="col">Result</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-latest-tbody">
+                                    <tr><td colspan="5" class="empty-state">Loading events…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══════════ MY DOCUMENTS ═══════════ -->
+            <section id="view-documents" class="view" aria-labelledby="my-docs-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="my-docs-title">My documents</h1>
+                        <p class="view-desc">Documents you own. Only you can edit, share or delete them.</p>
+                    </div>
+                    <button class="btn btn-primary" id="btn-new-upload">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Upload document
+                    </button>
+                </div>
+
+                <div class="toolbar">
+                    <div class="search-box">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <label class="sr-only" for="doc-search">Search my documents by name</label>
+                        <input type="text" id="doc-search" placeholder="Search by name" autocomplete="off">
+                    </div>
+                    <div class="filter-group">
+                        <label class="sr-only" for="doc-category-filter">Category</label>
+                        <select id="doc-category-filter">
+                            <option value="">All categories</option>
+                        </select>
+                        <label class="sr-only" for="doc-from-filter">Uploaded from</label>
+                        <input type="date" id="doc-from-filter" class="date-input" aria-label="Uploaded from" title="Uploaded from">
+                        <label class="sr-only" for="doc-to-filter">Uploaded to</label>
+                        <input type="date" id="doc-to-filter" class="date-input" aria-label="Uploaded to" title="Uploaded to">
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table" id="documents-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Category</th>
+                                <th scope="col">Size</th>
+                                <th scope="col">Uploaded</th>
+                                <th scope="col" class="th-actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="documents-tbody">
+                            <tr><td colspan="5" class="empty-state">Loading documents…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="doc-pagination"></div>
+            </section>
+
+            <!-- ═══════════ SHARED WITH ME ═══════════ -->
+            <section id="view-shared" class="view" aria-labelledby="shared-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="shared-title">Shared with me</h1>
+                        <p class="view-desc" id="shared-desc">Documents people shared with you. Your access level is shown for each; Edit appears only where you hold an Edit grant.</p>
+                    </div>
+                </div>
+
+                <div class="toolbar">
+                    <div class="search-box">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <label class="sr-only" for="shared-search">Search shared documents by name</label>
+                        <input type="text" id="shared-search" placeholder="Search by name" autocomplete="off">
+                    </div>
+                    <div class="filter-group">
+                        <label class="sr-only" for="shared-owner-filter">Owner</label>
+                        <select id="shared-owner-filter" data-empty-label="All owners">
+                            <option value="">All owners</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table" id="shared-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Owner</th>
+                                <th scope="col">Your access</th>
+                                <th scope="col">Shared on</th>
+                                <th scope="col" class="th-actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="shared-tbody">
+                            <tr><td colspan="5" class="empty-state">Loading shared documents…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="shared-pagination"></div>
+            </section>
+
+            <!-- ═══════════ UPLOAD ═══════════ -->
+            <section id="view-upload" class="view" aria-labelledby="upload-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="upload-title">Upload document</h1>
+                        <p class="view-desc">Add a new confidential file to your secure vault.</p>
+                    </div>
+                </div>
+
+                <div class="upload-grid">
+                    <form id="upload-form" class="card form-card" novalidate>
+                        <div id="upload-error" class="form-error hidden" role="alert"></div>
+                        <div id="upload-success" class="form-success hidden" role="status"></div>
+
+                        <div class="form-group">
+                            <label for="upload-name">Document name</label>
+                            <input type="text" id="upload-name" required placeholder="e.g. Q4 Financial Report" maxlength="255">
+                            <p class="field-error hidden" id="upload-name-error" aria-live="polite"></p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="upload-category">Category</label>
+                            <input type="text" id="upload-category" placeholder="Finance, Legal, HR…" maxlength="100">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="upload-file">File</label>
+                            <div class="dropzone" id="upload-dropzone">
+                                <p>Drag a file here or choose one</p>
+                                <span>PDF, JPEG or PNG, up to 5 MB.</span>
+                                <input type="file" id="upload-file" accept=".pdf,.jpg,.jpeg,.png,.image/png,.image/jpeg,application/pdf" required>
+                            </div>
+                            <p class="file-info" id="upload-file-info" aria-live="polite"></p>
+                            <p class="field-error hidden" id="upload-file-error" aria-live="polite"></p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="upload-desc">Description <span class="hint">(optional)</span></label>
+                            <textarea id="upload-desc" rows="3" placeholder="Brief description of the document contents…" maxlength="2000"></textarea>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="upload-btn">Upload document</button>
+                            <button type="button" class="btn btn-ghost" id="upload-cancel">Cancel</button>
+                        </div>
+                    </form>
+
+                    <div class="card upload-rules-card">
+                        <div class="rules-header">
+                            <div class="rules-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            </div>
+                            <h3>Upload rules</h3>
+                        </div>
+                        <ul class="upload-rules-list">
+                            <li><strong>Accepted file formats</strong><span>PDF documents, JPEG images and PNG images only.</span></li>
+                            <li><strong>Maximum file size</strong><span>Single files up to 5 MB are accepted for secure vault storage.</span></li>
+                            <li><strong>Ownership &amp; access</strong><span>You are the document owner and fully control who else can open it.</span></li>
+                            <li><strong>Audit trail guarantee</strong><span>Every upload and subsequent access is recorded in the tamper-evident audit log.</span></li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══════════ SEARCH ═══════════ -->
+            <section id="view-search" class="view" aria-labelledby="search-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="search-title">Search</h1>
+                        <!-- The description follows the role of the signed-in
+                             account: it always says what may be found. -->
+                        <p class="view-desc" id="search-desc">Searches only documents you are authorized to discover.</p>
+                    </div>
+                </div>
+
+                <div class="toolbar">
+                    <div class="search-box" style="max-width:100%;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <label class="sr-only" for="global-search-input">Search documents by name, category or description</label>
+                        <input type="text" id="global-search-input" placeholder="Search by document name, category or description…" autocomplete="off">
+                    </div>
+                    <div class="filter-group">
+                        <label class="sr-only" for="search-owner-filter">Owner</label>
+                        <select id="search-owner-filter" data-empty-label="Any owner">
+                            <option value="">Any owner</option>
+                        </select>
+                        <label class="sr-only" for="search-category-filter">Category</label>
+                        <select id="search-category-filter" data-empty-label="Any category">
+                            <option value="">Any category</option>
+                        </select>
+                        <label class="sr-only" for="search-from-filter">From</label>
+                        <input type="date" id="search-from-filter" class="date-input" aria-label="Uploaded from" title="Uploaded from">
+                        <label class="sr-only" for="search-to-filter">To</label>
+                        <input type="date" id="search-to-filter" class="date-input" aria-label="Uploaded to" title="Uploaded to">
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-search">Search</button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table" id="search-results-table">
+                        <thead>
+                            <!-- The columns follow the role: a Viewer and an
+                                 Admin see Name, Owner and Your access, a
+                                 Document Owner sees Name, Owner, Category and
+                                 Uploaded. The unused headings are hidden. -->
+                            <tr>
+                                <th scope="col" id="search-th-name" data-col="name">Name</th>
+                                <th scope="col" id="search-th-owner" data-col="owner">Owner</th>
+                                <th scope="col" id="search-th-category" data-col="category">Category</th>
+                                <th scope="col" id="search-th-access" data-col="access">Your access</th>
+                                <th scope="col" id="search-th-uploaded" data-col="uploaded">Uploaded</th>
+                                <th scope="col" id="search-th-actions" class="th-actions" data-col="actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="search-results-tbody">
+                            <tr><td colspan="6" class="empty-state">Enter a query above to search documents.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="search-pagination"></div>
+            </section>
+
+            <!-- ═══════════ DOCUMENT DETAIL ═══════════ -->
+            <section id="view-doc-detail" class="view" aria-labelledby="detail-doc-name">
+                <p class="breadcrumb" id="detail-breadcrumb"></p>
+                <div class="view-header">
+                    <div>
+                        <h1 id="detail-doc-name">Document</h1>
+                    </div>
+                    <div class="header-actions" id="detail-actions"></div>
+                </div>
+
+                <div class="tab-bar" role="tablist" aria-label="Document sections">
+                    <button type="button" class="tab active" id="tab-details" role="tab" aria-selected="true" aria-controls="panel-details">Details</button>
+                    <button type="button" class="tab" id="tab-access" role="tab" aria-selected="false" aria-controls="panel-access">Access</button>
+                    <button type="button" class="tab hidden" id="tab-activity" role="tab" aria-selected="false" aria-controls="panel-activity">Activity</button>
+                </div>
+
+                <!-- Details tab -->
+                <div id="panel-details" class="tab-content active" role="tabpanel" aria-labelledby="tab-details">
+                    <div class="detail-grid">
+                        <div class="card">
+                            <h3>Details</h3>
+                            <dl class="meta-list" id="detail-meta"></dl>
+                        </div>
+                        <div class="card hidden" id="detail-access-card">
+                            <div class="rules-header">
+                                <div class="rules-icon">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                </div>
+                                <h3>Your access</h3>
+                            </div>
+                            <div id="detail-access-description" class="modal-desc"></div>
+                            <ul class="access-check-list" id="detail-access-caps"></ul>
+                            <p class="access-panel-note" id="detail-access-note"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Access tab -->
+                <div id="panel-access" class="tab-content" role="tabpanel" aria-labelledby="tab-access">
+                    <div class="card" id="detail-grant-card">
+                        <div class="card-header-row">
+                            <h3>Grant access</h3>
+                        </div>
+                        <form id="grant-form" class="grant-form" novalidate>
+                            <div class="form-group">
+                                <label for="grant-email">Person email</label>
+                                <input type="email" id="grant-email" required placeholder="colleague@company.com" autocomplete="off">
+                                <p class="field-error hidden" id="grant-email-error" aria-live="polite"></p>
+                            </div>
+                            <div class="form-group">
+                                <label for="grant-permission">Permission</label>
+                                <select id="grant-permission">
+                                    <option value="read">Read</option>
+                                    <option value="edit">Edit</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="grant-btn">Grant</button>
+                        </form>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header-row">
+                            <h3>Who can open this</h3>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table compact" id="permissions-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Person</th>
+                                        <th scope="col">Permission</th>
+                                        <th scope="col">Granted</th>
+                                        <th scope="col" class="th-actions">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="permissions-tbody">
+                                    <tr><td colspan="4" class="empty-state">Loading access list…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity tab (owner only) -->
+                <div id="panel-activity" class="tab-content" role="tabpanel" aria-labelledby="tab-activity">
+                    <div class="card">
+                        <div class="card-header-row">
+                            <h3>Activity on this document only, including refused attempts.</h3>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table compact" id="doc-activity-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">When</th>
+                                        <th scope="col">Who</th>
+                                        <th scope="col">Action</th>
+                                        <th scope="col">Result</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="doc-activity-tbody">
+                                    <tr><td colspan="4" class="empty-state">Loading activity…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══════════ EDIT DOCUMENT ═══════════ -->
+            <section id="view-doc-edit" class="view" aria-labelledby="edit-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="edit-title">Edit document</h1>
+                        <p class="view-desc">Change the name, category, description or replace the file.</p>
+                    </div>
+                </div>
+                <form id="edit-form" class="card form-card" novalidate>
+                    <div id="edit-error" class="form-error hidden" role="alert"></div>
+                    <div id="edit-success" class="form-success hidden" role="status"></div>
+                    <input type="hidden" id="edit-doc-id">
+                    <div class="form-group">
+                        <label for="edit-name">Document name</label>
+                        <input type="text" id="edit-name" required maxlength="255">
+                        <p class="field-error hidden" id="edit-name-error" aria-live="polite"></p>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-category">Category</label>
+                        <input type="text" id="edit-category" maxlength="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-desc">Description <span class="hint">(optional)</span></label>
+                        <textarea id="edit-desc" rows="3" maxlength="2000"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-file">File</label>
+                        <!-- The file that is stored today. -->
+                        <p class="file-current" id="edit-current-file">—</p>
+                        <input type="file" id="edit-file" class="file-input-hidden" accept=".pdf,.jpg,.jpeg,.png,.image/png,.image/jpeg,application/pdf">
+                        <button type="button" class="btn btn-ghost btn-sm" id="edit-file-button">Replace file</button>
+                        <p class="file-info" id="edit-file-info" aria-live="polite"></p>
+                        <p class="form-hint" id="edit-file-hint">PDF, JPEG or PNG, up to 5 MB. The server validates every file. Allowed because you hold an Edit grant.</p>
+                        <p class="field-error hidden" id="edit-file-error" aria-live="polite"></p>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="edit-btn">Save changes</button>
+                        <button type="button" class="btn btn-ghost" id="edit-cancel-btn">Cancel</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- ═══════════ DOCUMENT NOT FOUND ═══════════ -->
+            <!-- Screen 7 of 10. It replaces the old banner-over-form screen:
+                 "No editable form remains after the server refuses." -->
+            <section id="view-doc-not-found" class="view" aria-labelledby="not-found-title">
+                <div class="card not-found-card">
+                    <h1 class="not-found-title" id="not-found-title">Document not found</h1>
+                    <p class="not-found-hint">It may not exist, or you may not have access. The message is the same either way.</p>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-primary" id="btn-notfound-shared">Back to Shared with me</button>
+                        <button type="button" class="btn btn-ghost" id="btn-notfound-search">Go to Search</button>
+                    </div>
+                    <p class="not-found-note">This attempt was recorded.</p>
+                </div>
+            </section>
+
+            <!-- ═══════════ ACCOUNT (profile + password) ═══════════ -->
+            <section id="view-profile" class="view" aria-labelledby="profile-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="profile-title">Account</h1>
+                        <p class="view-desc">Manage your profile details and password.</p>
+                    </div>
+                </div>
+                <div class="profile-grid">
+                    <form id="profile-form" class="card form-card" novalidate>
+                        <h3>Profile information</h3>
+                        <div id="profile-error" class="form-error hidden" role="alert"></div>
+                        <div id="profile-success" class="form-success hidden" role="status"></div>
+                        <div class="form-group">
+                            <label for="profile-name">Name</label>
+                            <input type="text" id="profile-name" maxlength="100" autocomplete="name">
+                        </div>
+                        <div class="form-group">
+                            <label for="profile-email">Email</label>
+                            <input type="email" id="profile-email" maxlength="255" autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label for="profile-role">Role</label>
+                            <input type="text" id="profile-role" disabled class="input-disabled">
+                        </div>
+                        <div class="form-group">
+                            <label for="profile-created">Member since</label>
+                            <input type="text" id="profile-created" disabled class="input-disabled">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="profile-btn">Update profile</button>
+                        </div>
+                    </form>
+
+                    <form id="password-form" class="card form-card" novalidate>
+                        <h3>Change password</h3>
+                        <div id="password-error" class="form-error hidden" role="alert"></div>
+                        <div id="password-success" class="form-success hidden" role="status"></div>
+                        <div class="form-group">
+                            <label for="pw-current">Current password</label>
+                            <input type="password" id="pw-current" required autocomplete="current-password">
+                        </div>
+                        <div class="form-group">
+                            <label for="pw-new">New password</label>
+                            <input type="password" id="pw-new" required minlength="12" maxlength="72" autocomplete="new-password" placeholder="Min. 12 characters">
+                            <p class="field-error hidden" id="pw-new-error" aria-live="polite"></p>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="password-btn">Change password</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- ═══════════ ADMIN — AUDIT LOG ═══════════ -->
+            <section id="view-admin-audit" class="view" aria-labelledby="admin-audit-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="admin-audit-title">Audit log</h1>
+                        <p class="view-desc">Append-only record. Metadata only: never document contents, passwords or session tokens.</p>
+                    </div>
+                </div>
+
+                <div class="audit-summary-grid">
+                    <div class="audit-banner-card worth-look hidden" id="audit-worth-look">
+                        <div class="banner-title worth-look">WORTH A LOOK</div>
+                        <div class="banner-desc" id="audit-worth-look-text"></div>
+                    </div>
+                    <div class="audit-banner-card integrity" id="audit-integrity-card">
+                        <div class="banner-title integrity" id="audit-integrity-title">INTEGRITY: NOT VERIFIED</div>
+                        <div class="banner-desc" id="audit-integrity-text">Shows the real status once the backend provides it.</div>
+                        <div id="audit-chain-status-ext" class="chain-status-ext"></div>
+                        <button class="btn btn-sm btn-ghost" id="btn-verify-chain" type="button">Verify now</button>
+                    </div>
+                </div>
+
+                <div class="toolbar">
+                    <div class="filter-group">
+                        <label class="sr-only" for="audit-action-filter">Action</label>
+                        <select id="audit-action-filter">
+                            <option value="">All actions</option>
+                        </select>
+                        <label class="sr-only" for="audit-user-filter">User</label>
+                        <select id="audit-user-filter">
+                            <option value="">All users</option>
+                        </select>
+                        <label class="sr-only" for="audit-outcome-filter">Result</label>
+                        <select id="audit-outcome-filter">
+                            <option value="">All results</option>
+                            <option value="success">Allowed</option>
+                            <option value="denied">Refused</option>
+                            <option value="failure">Failure</option>
+                        </select>
+                        <label class="sr-only" for="audit-from-filter">Date range start</label>
+                        <input type="date" id="audit-from-filter" class="date-input" aria-label="Date range start" title="Date range start">
+                        <label class="sr-only" for="audit-to-filter">Date range end</label>
+                        <input type="date" id="audit-to-filter" class="date-input" aria-label="Date range end" title="Date range end">
+                        <button type="button" class="btn btn-ghost btn-sm" id="audit-clear-filters">Clear</button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table compact" id="audit-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Time</th>
+                                <th scope="col">User</th>
+                                <th scope="col">Action</th>
+                                <th scope="col">Document</th>
+                                <th scope="col">Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-tbody">
+                            <tr><td colspan="5" class="empty-state">Loading audit log…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="audit-pagination"></div>
+            </section>
+
+            <!-- ═══════════ ADMIN — USERS ═══════════ -->
+            <section id="view-admin-users" class="view" aria-labelledby="admin-users-title">
+                <div class="view-header">
+                    <div>
+                        <h1 id="admin-users-title">Users</h1>
+                        <p class="view-desc">New sign-ups start as Viewer. Admins create accounts and set roles. Disabling ends sessions at once.</p>
+                    </div>
+                    <button class="btn btn-primary" id="btn-add-user" type="button">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Add user
+                    </button>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table" id="admin-users-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Email</th>
+                                <th scope="col">Role</th>
+                                <th scope="col">Status</th>
+                                <th scope="col" class="th-actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-users-tbody">
+                            <tr><td colspan="5" class="empty-state">Loading users…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="admin-users-pagination"></div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         MODALS
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- Add user -->
+    <div id="add-user-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="add-user-title">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="add-user-title">Add user</h3>
+                <button type="button" class="btn-icon modal-close" data-close-modal="add-user-modal" aria-label="Close add user dialog">&times;</button>
+            </div>
+            <form id="add-user-form" novalidate>
+                <div id="add-user-error" class="form-error hidden" role="alert"></div>
+                <div id="add-user-success" class="form-success hidden" role="status"></div>
+                <div class="form-group">
+                    <label for="add-user-name">Full name</label>
+                    <input type="text" id="add-user-name" required maxlength="100" placeholder="Full name" autocomplete="off">
+                    <p class="field-error hidden" id="add-user-name-error" aria-live="polite"></p>
+                </div>
+                <div class="form-group">
+                    <label for="add-user-email">Email</label>
+                    <input type="email" id="add-user-email" required maxlength="255" placeholder="name@company.com" autocomplete="off">
+                    <p class="field-error hidden" id="add-user-email-error" aria-live="polite"></p>
+                </div>
+                <div class="form-group">
+                    <label for="add-user-role">Role</label>
+                    <select id="add-user-role">
+                        <option value="viewer">Viewer</option>
+                        <option value="document_owner">Document Owner</option>
+                    </select>
+                    <p class="form-hint">Admin accounts cannot be created here. The server decides which roles an Admin may assign.</p>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-ghost" data-close-modal="add-user-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="add-user-btn">Create user</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Change role -->
+    <div id="role-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="role-modal-title">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="role-modal-title">Change role</h3>
+                <button type="button" class="btn-icon modal-close" data-close-modal="role-modal" aria-label="Close change role dialog">&times;</button>
+            </div>
+            <form id="role-form" novalidate>
+                <div id="role-error" class="form-error hidden" role="alert"></div>
+                <input type="hidden" id="role-user-id">
+                <p class="modal-desc" id="role-user-info"></p>
+                <div class="form-group">
+                    <label for="role-current">Current role</label>
+                    <input type="text" id="role-current" disabled class="input-disabled">
+                </div>
+                <div class="form-group">
+                    <label for="role-select">New role</label>
+                    <select id="role-select">
+                        <option value="admin">Admin</option>
+                        <option value="document_owner">Document Owner</option>
+                        <option value="viewer">Viewer</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-ghost" data-close-modal="role-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="role-save-btn">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Generic confirmation (delete / revoke / disable / enable) -->
+    <div id="confirm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h3 id="confirm-title">Confirm</h3>
+                <button type="button" class="btn-icon modal-close" data-close-modal="confirm-modal" aria-label="Close dialog">&times;</button>
+            </div>
+            <p id="confirm-message" class="modal-desc"></p>
+            <div class="form-actions">
+                <button type="button" class="btn btn-ghost" data-close-modal="confirm-modal" data-modal-initial-focus>Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirm-ok">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         LIVE REGION + TOASTS
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div id="live-region" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
