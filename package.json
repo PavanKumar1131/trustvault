@@ -10,7 +10,6 @@
     "seed": "node src/scripts/seed.js",
     "init-db": "node src/init-db.js",
     "schema:sync": "node src/scripts/sync-schema.js",
-    "designs:extract": "python tools/pdf2design.py designs",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --runInBand --coverage"
