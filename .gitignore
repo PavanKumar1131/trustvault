@@ -15,6 +15,7 @@ downloaded-test*.pdf
 unauthorized-download.pdf
 test-document.pdf
 test-upload.txt
+demo-credentials.txt
 
 # Private uploaded documents
 uploads/
