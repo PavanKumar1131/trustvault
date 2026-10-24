@@ -25,7 +25,7 @@ npm install
 
 ## 2. Environment Configuration (`.env`)
 
-TrustVault reads environment variables from `.env` via `dotenv`. A template is provided in [`.env.example`](file:///c:/trustvault/.env.example).
+TrustVault reads environment variables from `.env` via `dotenv`. A template is provided in [`.env.example`](../.env.example).
 
 ### Safe Configuration Steps
 1. Copy the template to `.env`:
@@ -46,7 +46,7 @@ TrustVault reads environment variables from `.env` via `dotenv`. A template is p
 
 ## 3. Test Database Isolation & Safety Guards
 
-Automated tests perform destructive operations: schema resets, table truncations, temporary user creation, mock uploads, and trigger violation checks. To protect production and development data, [`src/config.js`](file:///c:/trustvault/src/config.js) enforces strict, non-bypassable pre-flight safety checks when `NODE_ENV=test`.
+Automated tests perform destructive operations: schema resets, table truncations, temporary user creation, mock uploads, and trigger violation checks. To protect production and development data, [`src/config.js`](../src/config.js) enforces strict, non-bypassable pre-flight safety checks when `NODE_ENV=test`.
 
 ### Mandatory Guard Rules
 The test harness will **abort execution immediately** if:
@@ -64,13 +64,13 @@ CREATE DATABASE trustvault_test;
 In `.env`, configure:
 ```env
 # Development database
-DATABASE_URL="postgresql://postgres:password@localhost:5432/trustvault?sslmode=disable"
+DATABASE_URL="postgresql://postgres:<password>@localhost:5432/trustvault?sslmode=disable"
 
 # Dedicated, isolated test database
-TEST_DATABASE_URL="postgresql://postgres:password@localhost:5432/trustvault_test?sslmode=disable"
+TEST_DATABASE_URL="postgresql://postgres:<password>@localhost:5432/trustvault_test?sslmode=disable"
 ```
 
-The test runner automatically initializes schemas, tables, triggers, and indices on `trustvault_test` during global test setup via [`tests/globalSetup.js`](file:///c:/trustvault/tests/globalSetup.js).
+The test runner automatically initializes schemas, tables, triggers, and indices on `trustvault_test` during global test setup via [`tests/globalSetup.js`](../tests/globalSetup.js).
 
 ---
 
@@ -143,6 +143,30 @@ Tests idempotent migration execution (`npm run migrate`), demo seed protection i
 npx jest tests/migrations.test.js --runInBand
 ```
 
+### Database Safety Guards & Environment Isolation
+Tests non-bypassable pre-flight safety guards refusing production `neondb` and databases without `test` in their name:
+```bash
+npx jest tests/config.test.js --runInBand
+```
+
+### Generalized Requests & Role Upgrade Workflows
+Tests policy registry validation, single pending request constraints, 7-day cooldowns, requester cancellation, administrative approval/rejection, and audit integration:
+```bash
+npx jest tests/request-policy.test.js tests/role-upgrade.test.js --runInBand
+```
+
+### Admin User Management & Search Filters
+Tests user listing, multi-parameter search (name/email escaping), role filtering, active/disabled status filtering, self-demotion guards, and last-admin preservation:
+```bash
+npx jest tests/admin-users.test.js --runInBand
+```
+
+### Database Backup & Disaster Recovery Verification
+Tests blob standardization (base64 and Buffer JSON compatibility), pre-flight restore safety guards, remote TLS certificate validation, and non-destructive audit chain verification:
+```bash
+npx jest tests/backup.test.js --runInBand
+```
+
 ### Frontend UI & DOM Interaction
 Tests role-based navigation display, upload button hiding for Admin/Viewer, modal workflows, search filtering, and audit log rendering:
 ```bash
@@ -151,7 +175,16 @@ npx jest tests/frontend.dom.test.js tests/frontend.test.js --runInBand
 
 ---
 
-## 6. Inspection & Operational Verification Tools
+## 6. Test Suite Verification Summary
+
+- **Total Test Suites**: 15 passed, 15 total
+- **Total Test Assertions**: 407 passed, 407 total (0 failures)
+- **Verified Run Date**: October 24–25, 2026
+- **Test Mode**: Sequential in-band execution (`--runInBand`)
+
+---
+
+## 7. Inspection & Operational Verification Tools
 
 TrustVault includes maintenance tools located under `tools/`:
 

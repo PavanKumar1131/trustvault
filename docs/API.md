@@ -361,9 +361,102 @@ This document describes the HTTP API surface of TrustVault. All endpoints are se
 
 ---
 
-## 4. Administration Routes (`/api/admin`)
+## 4. Generalized Requests Routes (`/api/requests`)
 
-All routes under `/api/admin` require an authenticated user with `role === "admin"`. Non-admin callers receive `403 Forbidden` (`{ "message": "Administrator access required" }`).
+All endpoints under `/api/requests` require an authenticated session (`requireAuth`) and are subject to CSRF protection on mutating requests (`POST`).
+
+### `GET /api/requests/mine`
+- **Auth**: Required (`viewer`, `document_owner`, or `admin`).
+- **Description**: Returns the caller's complete request history (newest first) along with rejection cooldown indicators.
+- **Headers**: Responses include `Cache-Control: no-store, no-cache, must-revalidate, private`.
+- **Response `200 OK`**:
+  ```json
+  {
+    "requests": [
+      {
+        "id": "uuid",
+        "requesterId": "uuid",
+        "requestType": "document_owner_upgrade",
+        "requestedRole": "document_owner",
+        "reason": "Need owner privileges to author project documentation.",
+        "status": "pending",
+        "decisionNote": null,
+        "reviewerRole": "admin",
+        "decidedBy": null,
+        "submittedAt": "2026-10-24T10:00:00.000Z",
+        "decidedAt": null,
+        "nextEligibleAt": null
+      }
+    ]
+  }
+  ```
+- **Responses**:
+  - `200 OK`: Request array returned.
+  - `401 Unauthorized`: Authentication required.
+  - `500 Internal Server Error`: Database query failed.
+
+### `POST /api/requests`
+- **Auth**: Required (`viewer` for `document_owner_upgrade`).
+- **Rate Limit**: Maximum 20 submissions per 15-minute sliding window per client IP.
+- **CSRF**: Required (`x-csrf-token` header or `_csrf` body parameter).
+- **Description**: Submits a new request. Currently supported `requestType` is `"document_owner_upgrade"`.
+- **Request Body**:
+  ```json
+  {
+    "requestType": "document_owner_upgrade",
+    "reason": "Brief justification (optional, max 500 characters)"
+  }
+  ```
+- **Validation**:
+  - `requestType`: Mandatory string. Currently only `"document_owner_upgrade"` is supported.
+  - `reason`: Optional text up to 500 characters.
+  - `targetResourceId` / `requestedPermission`: Must be omitted for role upgrade requests.
+- **Responses**:
+  - `201 Created`: Request submitted successfully.
+    ```json
+    {
+      "message": "Request submitted",
+      "request": {
+        "id": "uuid",
+        "requestType": "document_owner_upgrade",
+        "requestedRole": "document_owner",
+        "reason": "Brief justification",
+        "status": "pending",
+        "submittedAt": "ISO-8601"
+      },
+      "currentRole": "viewer",
+      "canSubmit": false
+    }
+    ```
+  - `400 Bad Request`: Invalid request type, invalid payload, or reason exceeding 500 characters.
+  - `409 Conflict`: `REQUEST_PENDING` — caller already has an unresolved pending request.
+  - `409 Conflict`: `ROLE_NOT_ELIGIBLE` — account role is not eligible to submit this request.
+  - `429 Too Many Requests`: `REQUEST_COOLDOWN` — a prior request was rejected within the past 7 days (`Retry-After` header included).
+
+### `POST /api/requests/:id/cancel`
+- **Auth**: Required (caller must be the original requester).
+- **CSRF**: Required.
+- **Description**: Cancels a pending request submitted by the caller. Resolved requests cannot be cancelled.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "message": "Request cancelled",
+      "request": {
+        "id": "uuid",
+        "status": "cancelled",
+        "decidedAt": "ISO-8601"
+      }
+    }
+    ```
+  - `400 Bad Request`: Request is already resolved (approved, rejected, or cancelled).
+  - `404 Not Found`: Request ID does not exist or was submitted by another user.
+
+---
+
+## 5. Administration Routes (`/api/admin`)
+
+All routes under `/api/admin` require an authenticated user with `role === "admin"`. Non-admin callers receive `403 Forbidden` (`{ "message": "Access denied: Administrator privileges required" }`).
 
 ### `GET /api/admin/overview`
 - **Description**: Returns system-wide metrics and health indicators:
@@ -406,53 +499,127 @@ All routes under `/api/admin` require an authenticated user with `role === "admi
 - **Description**: Returns all distinct actions and users currently present in `audit_logs` for filter dropdowns.
 - **Response `200 OK`**: `{ "actions": [...], "users": [...] }`
 
-### `GET /api/admin/role-upgrade-requests`
-- **Description**: Returns role-upgrade requests for administrator review. Defaults to pending requests, oldest first.
+### `GET /api/admin/requests`
+- **Description**: Returns paginated list of generalized user requests with search and status filtering. Pending requests sort oldest-first; resolved requests sort newest-first.
 - **Query Parameters**:
-  - `status`: `pending` (default), `approved`, `rejected`, `resolved` (both decided states, newest first), or `all`.
+  - `status`: `pending` (default), `approved`, `rejected`, `cancelled`, `resolved` (all decided states), or `all`.
+  - `type`: Filter by request type (e.g. `document_owner_upgrade`).
+  - `search`: Case-insensitive substring match against requester name or email.
   - `limit`: 1–100 (default 50).
-  - `offset`: 0 or greater.
+  - `offset`: 0 or greater (default 0).
 - **Response `200 OK`**:
   ```json
   {
     "requests": [
       {
         "id": "uuid",
+        "requesterId": "uuid",
         "requester": { "id": "uuid", "name": "...", "email": "...", "role": "viewer", "isDisabled": false },
+        "requestType": "document_owner_upgrade",
         "requestedRole": "document_owner",
+        "reason": "Need owner privileges to author project documentation.",
         "status": "pending",
-        "justification": "Optional text",
+        "decisionNote": null,
+        "reviewerRole": "admin",
+        "decidedBy": null,
         "submittedAt": "2026-10-24T10:00:00.000Z",
         "decidedAt": null,
-        "decidedBy": null,
         "nextEligibleAt": null
       }
     ],
     "total": 1,
     "status": "pending",
+    "type": null,
     "limit": 50,
     "offset": 0
   }
   ```
 
-### `POST /api/admin/role-upgrade-requests/:id/approve`
-- **Description**: Approves a pending request and makes the requester a `document_owner`. The account row and request row are locked inside one transaction; the decision, role change and audit entry commit together. Only one concurrent decision can succeed.
+### `POST /api/admin/requests/:id/approve`
+- **CSRF**: Required.
+- **Description**: Approves a pending request. For `document_owner_upgrade`, promotes the requester to `document_owner`. The account row, request row, and audit append commit atomically within a single transaction.
+- **Request Body**:
+  ```json
+  {
+    "decisionNote": "Approved for project documentation lead (optional, max 500 chars)"
+  }
+  ```
 - **Responses**:
-  - `200 OK`: `{ "message": "...", "request": { ... }, "user": { ... } }`
-  - `400 Bad Request`: Invalid request id.
-  - `403 Forbidden`: `SELF_DECISION` — an administrator cannot decide their own request.
+  - `200 OK`:
+    ```json
+    {
+      "message": "Request approved",
+      "request": {
+        "id": "uuid",
+        "status": "approved",
+        "decisionNote": "Approved for project documentation lead",
+        "decidedAt": "ISO-8601"
+      },
+      "user": {
+        "id": "uuid",
+        "role": "document_owner"
+      }
+    }
+    ```
+  - `400 Bad Request`: Invalid request ID format, decision note exceeding 500 chars, or invalid role transition.
+  - `403 Forbidden`: `SELF_DECISION` — an administrator cannot approve their own request.
   - `404 Not Found`: Request does not exist.
-  - `409 Conflict`: `REQUEST_NOT_PENDING` (already decided) or `REQUESTER_ROLE_CHANGED` (the requester is no longer a Viewer).
-  - `500 Internal Server Error`: The transaction was rolled back, including the role change and audit entry.
+  - `409 Conflict`: `REQUEST_NOT_PENDING` (already resolved) or `REQUESTER_ROLE_CHANGED` (the requester is no longer in the prerequisite role).
 
-### `POST /api/admin/role-upgrade-requests/:id/reject`
-- **Description**: Rejects a pending request without changing the requester's role and starts a seven-day cooldown. The decision and its audit entry commit together.
-- **Responses**: The same status codes as approval. `nextEligibleAt` is returned on the decided request.
+### `POST /api/admin/requests/:id/reject`
+- **CSRF**: Required.
+- **Description**: Rejects a pending request without changing the requester's role and initiates a 7-day cooldown on re-requesting.
+- **Request Body**:
+  ```json
+  {
+    "decisionNote": "Reason for rejection (optional, max 500 chars)"
+  }
+  ```
+- **Responses**: Same status codes as approval. Returns `nextEligibleAt` timestamp set to 7 days after decision.
+
+### `GET /api/admin/role-upgrade-requests` (Legacy Compatibility)
+- **Description**: Backward-compatible route forwarding to the generalized request store filtered by `type=document_owner_upgrade`.
+- **Query Parameters**: Same as `GET /api/admin/requests`.
+- **Response `200 OK`**: Serialized requests matching legacy shape.
+
+### `POST /api/admin/role-upgrade-requests/:id/approve` (Legacy Compatibility)
+- **Description**: Backward-compatible approval route; proxies to `POST /api/admin/requests/:id/approve`.
+
+### `POST /api/admin/role-upgrade-requests/:id/reject` (Legacy Compatibility)
+- **Description**: Backward-compatible rejection route; proxies to `POST /api/admin/requests/:id/reject`.
 
 ### `GET /api/admin/users`
-- **Description**: Returns full system user directory with document counts, active grants, and account status.
-- **Query Parameters**: `limit` (1-100), `offset` (0+).
-- **Response `200 OK`**: `{ "users": [...], "total": 14 }`
+- **Description**: Returns paginated user directory with document counts, active grants, and account status. Supports multi-field search and filtering.
+- **Query Parameters**:
+  - `search`: Substring match on name or email (case-insensitive, trimmed).
+  - `role`: Filter by role (`admin`, `document_owner`, `viewer`).
+  - `status`: Filter by status (`active`, `disabled`).
+  - `limit`: 1–100 (default 50).
+  - `offset`: 0 or greater (default 0).
+  - `page`: Optional 1-based page index (alternative to offset).
+  - `pageSize`: Optional page size (alternative to limit).
+- **Response `200 OK`**:
+  ```json
+  {
+    "users": [
+      {
+        "id": "uuid",
+        "name": "Jane Smith",
+        "email": "jane@company.com",
+        "role": "document_owner",
+        "is_disabled": false,
+        "created_at": "ISO-8601",
+        "document_count": 5
+      }
+    ],
+    "total": 14,
+    "limit": 50,
+    "offset": 0,
+    "page": 1,
+    "pageSize": 50,
+    "hasMore": false
+  }
+  ```
 
 ### `POST /api/admin/users`
 - **CSRF**: Required.
@@ -497,7 +664,7 @@ All routes under `/api/admin` require an authenticated user with `role === "admi
 
 ---
 
-## 5. System Health Routes
+## 6. System Health Routes
 
 ### `GET /api/health`
 - **Auth**: None.

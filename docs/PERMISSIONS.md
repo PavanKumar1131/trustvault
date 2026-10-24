@@ -2,7 +2,7 @@
 
 This document specifies the server-enforced permissions, role models, and document access control rules implemented in TrustVault.
 
-The single source of truth for document authorization in the backend is [`src/services/accessService.js`](file:///c:/trustvault/src/services/accessService.js). System-level role and authentication checks are enforced by [`src/middleware/auth.js`](file:///c:/trustvault/src/middleware/auth.js).
+The single source of truth for document authorization in the backend is [`src/services/accessService.js`](../src/services/accessService.js). System-level role and authentication checks are enforced by [`src/middleware/auth.js`](../src/middleware/auth.js).
 
 ---
 
@@ -22,28 +22,30 @@ TrustVault recognizes three mutually exclusive user roles stored in the `users.r
 
 Public self-registration is handled via `POST /api/auth/register`:
 
-- **Strict Default Role**: The registration handler in [`src/routes/auth.js`](file:///c:/trustvault/src/routes/auth.js) strictly assigns the `viewer` role to every new account.
+- **Strict Default Role**: The registration handler in [`src/routes/auth.js`](../src/routes/auth.js) strictly assigns the `viewer` role to every new account.
 - **Client Role Parameter Ignored**: Any `role` parameter supplied in the registration request payload is ignored. Users cannot self-promote to `document_owner` or `admin`.
 - **Administrative Role Elevation**: Account promotion to `document_owner` or `admin` must be performed by an existing administrator through the protected endpoint `PATCH /api/admin/users/:id/role`.
 
 ### Viewer → Document Owner Upgrade Workflow
 
-A Viewer may ask for Document Owner access from the Profile page instead of waiting for an administrator to change the role directly.
+A Viewer may ask for Document Owner access directly from their Profile page instead of waiting for an administrator to initiate a role change:
 
-- **Request scope**: Only `document_owner` can be requested. The server fixes the requested role, the requester and the timestamps; client-supplied `userId`, `approverId`, status or role values cannot grant anything.
-- **One pending request**: A partial unique index on `(user_id) WHERE status = 'pending'` makes concurrent duplicate submissions impossible. A second submission is answered with `409 REQUEST_PENDING`.
-- **Status is server-authoritative**: `GET /api/auth/role-upgrade-request` returns only the caller's own latest request. No endpoint accepts another user's id, and the deciding administrator's identity is not exposed to the requester.
-- **Rejection cooldown**: A rejected requester may submit again after seven days. The cooldown is evaluated with PostgreSQL's `NOW()` on submission; the browser's displayed time is informational only. Retries during the cooldown receive `429 ROLE_UPGRADE_COOLDOWN` with `nextEligibleAt`.
-- **Review**: Only an active administrator may list and decide requests. Administrators cannot decide their own request. A decision locks the requester row and the request row in one transaction; concurrent decisions produce exactly one success, and a resolved request cannot be decided again.
-- **Direct role changes settle pending requests**: `PATCH /api/admin/users/:id/role` resolves a pending request in the same transaction. Assigning `document_owner` approves it; every other role assignment rejects it. If the role changes while a request is still pending, that request is settled immediately; a later request approval cannot overwrite the independently assigned role. Requests that were already approved or rejected remain in their recorded state.
-- **Audit integration**: Submission, approval, rejection and denied decisions are appended through the canonical audit service with server-derived actor and target ids. If the required audit append fails, the request/role change is rolled back. This feature adds no audit-history rebuild, truncation, rehash or rewrite; existing records and incident `INC-2026-438` remain preserved.
-- **Immediate effect**: `requireAuth` reloads the account row on every protected request, so an approved role applies to the existing session without signing out.
+- **Unified Request Store**: The upgrade workflow is managed through the generalized `requests` table (`request_type = 'document_owner_upgrade'`). Viewers submit via `POST /api/requests` (or legacy `POST /api/auth/role-upgrade-request`) and check status via `GET /api/requests/mine` (or legacy `GET /api/auth/role-upgrade-request`).
+- **Request Scope & Immutability**: Only `document_owner` can be requested. The server strictly fixes the requested role (`document_owner`), the requester ID, reviewer role (`admin`), and submission timestamps. Client-supplied IDs, roles, or status values are ignored.
+- **One Pending Request**: A partial unique index on `(requester_id, request_type) WHERE status = 'pending'` mathematically prevents concurrent duplicate submissions. Subsequent submissions while a request is pending return `409 Conflict` (`REQUEST_PENDING`).
+- **Requester Cancellation**: A requester can cancel their own active pending request at any time via `POST /api/requests/:id/cancel`. Once cancelled, the request cannot be approved or rejected.
+- **Status is Server-Authoritative**: `GET /api/requests/mine` returns only requests belonging to the authenticated caller. The reviewing administrator's user ID is omitted from requester views.
+- **Rejection Cooldown**: If an administrator rejects a request, a 7-day cooldown is initiated based on server time (`NOW()`). Any submission attempt within 7 days is rejected with `429 Too Many Requests` (`REQUEST_COOLDOWN` or legacy `ROLE_UPGRADE_COOLDOWN`) and includes `nextEligibleAt` and a `Retry-After` header.
+- **Atomic Administrative Review**: Only active administrators may list (`GET /api/admin/requests`) and decide requests (`POST /api/admin/requests/:id/approve` or `:id/reject`). Administrators cannot decide their own requests. A decision locks the requester row, request row, and audit chain in a single transaction; concurrent decisions yield exactly one winner.
+- **Direct Role Changes Settle Pending Requests**: Executing `PATCH /api/admin/users/:id/role` automatically resolves any pending request for that user in the same transaction: assigning `document_owner` approves it; assigning any other role rejects it. If an administrator alters the role directly, a later request approval cannot overwrite the independently assigned role.
+- **Cryptographic Audit Logging**: Submission, cancellation, approval, rejection, and denied attempts are appended to `audit_logs` with server-derived actor and target IDs. If the audit append fails, the entire transaction rolls back. Existing audit records and historical incident `INC-2026-438` remain untouched.
+- **Immediate Effect Without Re-login**: The `requireAuth` middleware re-queries the `users` table on each incoming request, so an approved role takes effect on the very next HTTP call without requiring the user to log out.
 
 ---
 
 ## 3. Document Authorization Matrix
 
-Document access is computed dynamically per request by `resolveDocumentAccess(user, documentId)` in [`src/services/accessService.js`](file:///c:/trustvault/src/services/accessService.js). Because the database is queried on every request, permissions changes and revocations take effect immediately.
+Document access is computed dynamically per request by `resolveDocumentAccess(user, documentId)` in [`src/services/accessService.js`](../src/services/accessService.js). Because the database is queried on every request, permissions changes and revocations take effect immediately.
 
 ### Action Permissions by Effective Access Level
 
@@ -82,6 +84,14 @@ Document access is computed dynamically per request by `resolveDocumentAccess(us
   4. Deletes the document record from `documents`.
   5. Records an immutable audit log entry `DOCUMENT_DELETED`.
 - Historical audit rows in `audit_logs` referencing this document remain intact because foreign key constraints do not use `ON DELETE CASCADE` or `ON DELETE SET NULL` on audit log reference columns.
+
+### Known Owner-Demotion Limitation
+When an administrator demotes an account from `document_owner` to `viewer` using `PATCH /api/admin/users/:id/role`:
+- **Upload access disabled**: The account loses the ability to upload new documents (`POST /api/documents/upload` requires `requireRole("document_owner")`), and the "Upload" button and "My Documents" navigation entries are hidden in the UI.
+- **Retained ownership of previously uploaded documents**: In the database schema, existing records in `documents` retain their original `owner_id = user.id`. Because `resolveDocumentAccess()` checks `isOwner = (document.owner_id === user.id)`, the demoted account **retains owner privileges** (read, download, edit, share, delete) over all documents it authored prior to demotion.
+- **Operational guidance**: If an administrator intends to revoke access to existing documents when demoting an owner, the administrator should either:
+  1. Transfer ownership or delete the documents prior to demoting the user; or
+  2. Disable the account entirely via `PATCH /api/admin/users/:id/disable` if all system access must be terminated immediately.
 
 ---
 
@@ -125,7 +135,7 @@ Administrators manage users through `/api/admin/*`, guarded by `requireAuth` and
 
 ## 7. Frontend Role Navigation Alignment
 
-The client-side interface in [`public/js/app.js`](file:///c:/trustvault/public/js/app.js) and [`public/index.html`](file:///c:/trustvault/public/index.html) aligns with the server authorization matrix:
+The client-side interface in [`public/js/app.js`](../public/js/app.js) and [`public/index.html`](../public/index.html) aligns with the server authorization matrix:
 
 | Navigation Item / Control | `admin` | `document_owner` | `viewer` | Server Enforcement |
 | --- | :---: | :---: | :---: | --- |
@@ -135,9 +145,11 @@ The client-side interface in [`public/js/app.js`](file:///c:/trustvault/public/j
 | **Upload Button** (`#btn-new-upload`) | **Hidden** | Visible | **Hidden** | Embedded in My Documents view; guarded by backend |
 | **Shared With Me** (`#nav-shared`) | Visible | Visible | Visible | `GET /api/documents/shared` requires authentication |
 | **Search** (`#nav-search`) | Visible | Visible | Visible | `GET /api/documents/search` scopes results to authorized files |
+| **Profile "My Requests"** (`#my-requests-section`) | Visible | Visible | Visible | `GET /api/requests/mine` scoped strictly to caller's own account |
 | **Admin Section** (`#nav-section-admin`) | Visible | **Hidden** | **Hidden** | Entire `/api/admin/*` subtree returns `403` for non-admins |
 | **Audit Log** (`#nav-admin-audit`) | Visible | **Hidden** | **Hidden** | `GET /api/admin/audit` returns `403` for non-admins |
 | **Users Console** (`#nav-admin-users`) | Visible | **Hidden** | **Hidden** | `GET /api/admin/users` returns `403` for non-admins |
+| **Admin Requests** (`#nav-admin-requests`) | Visible | **Hidden** | **Hidden** | `GET /api/admin/requests` returns `403` for non-admins |
 
 ### Default Views on Sign-In
 - **`admin`**: Lands on `dashboard` (System stats, chain integrity card, recent audit events).

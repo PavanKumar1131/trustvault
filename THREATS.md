@@ -667,6 +667,126 @@ blob and its grants).
 
 ---
 
+### T-27 — Production/test database confusion and test suite data destruction
+
+| | |
+| --- | --- |
+| **Model** | A, E |
+| **Severity** | Critical |
+| **Status** | Mitigated |
+
+**Risk.** Automated test suites perform destructive actions: resetting tables,
+truncating data, and running triggers. Running tests against production or
+development databases would destroy live records or corrupt data.
+
+**Mitigation.** [`src/config.js`](src/config.js) and
+[`tests/setupEnv.js`](tests/setupEnv.js) enforce strict,
+non-bypassable pre-flight safety guards when `NODE_ENV=test`. Execution aborts
+immediately if `TEST_DATABASE_URL` is missing, lacks an extractable database name,
+equals `DATABASE_URL`, or points to a database whose name does not contain the
+word `test` (`/test/i`). Protected databases (`postgres`, `neondb`, `trustvault`,
+`master`) are strictly refused.
+
+**Residual.** A developer who deliberately creates a production database with
+the word `test` in its name could theoretically pass the substring check; however,
+the `DATABASE_URL === TEST_DATABASE_URL` check still catches identical URLs.
+
+**Tests.** `tests/config.test.js` (verifies fail-closed rejection of `neondb`
+and verification of dedicated test database).
+
+---
+
+### T-28 — Backup data corruption, plaintext exposure, and unsafe database restoration
+
+| | |
+| --- | --- |
+| **Model** | D, F |
+| **Severity** | High |
+| **Status** | Mitigated |
+
+**Risk.** Document blobs exported in non-standard formats (Buffer JSON objects)
+suffer byte corruption during recovery; restore scripts accidentally pointed
+at production overwrite live business records; unencrypted remote connections
+leak sensitive files in transit.
+
+**Mitigation.** [`tools/backup-database.js`](tools/backup-database.js)
+standardizes binary blobs with base64 encoding and SHA-256 integrity digests
+(`standardizeBlobRow`), while maintaining backwards-compatibility for legacy
+Buffer JSON structures (`extractBlobBuffer`).
+[`tools/verify-backup-restore.js`](tools/verify-backup-restore.js)
+enforces fail-closed pre-flight isolation: rejects when `NODE_ENV === "production"`,
+rejects targets identical to `DATABASE_URL`, rejects databases without `"test"`
+or `"restore"` in the name, and strictly blocks protected databases (`postgres`,
+`neondb`, `trustvault`, `master`). Remote connections enforce TLS validation
+(`rejectUnauthorized: true`). Non-destructive audit verification is performed
+on the restored database without mutating records.
+
+**Residual.** Backup archives stored on local disks rely on host filesystem
+permissions for access control.
+
+**Tests.** `tests/backup.test.js` (29 assertions validating blob round-tripping,
+restore isolation guards, TLS rejection, and archive checksums).
+
+---
+
+### T-29 — Audit chain break obscuration and unauthorized chain rewriting
+
+| | |
+| --- | --- |
+| **Model** | D, F |
+| **Severity** | High |
+| **Status** | Mitigated |
+
+**Risk.** Audit verification utilities attempt to automatically "heal" or rebuild
+the cryptographic hash chain when encountering a break, erasing historical
+tampering evidence or concealing known incidents.
+
+**Mitigation.** [`src/services/auditService.js`](src/services/auditService.js)
+and [`tools/inspect-audit-chain.js`](tools/inspect-audit-chain.js)
+report broken hash links honestly. For documented historical incident
+`INC-2026-438` (entry 438), the verifier marks the overall status truthfully
+as `documented_incident`, validates the post-incident segment (entries 439 onward),
+and verifies that newly appended entries extend the latest recorded head. No
+automatic re-anchoring, truncation, or history rewriting is ever performed during
+verification.
+
+**Residual.** A PostgreSQL database superuser with direct SQL access can bypass
+the append-only trigger and recompute hash values directly in PostgreSQL.
+
+**Tests.** `tests/audit.test.js` (incident preservation and tamper detection),
+`tests/backup.test.js` (non-destructive audit checking), `tests/security.test.js`.
+
+---
+
+### T-30 — Unauthorized document viewing, editing, downloading and sharing (BOLA / IDOR)
+
+| | |
+| --- | --- |
+| **Model** | B, C |
+| **Severity** | Critical |
+| **Status** | Mitigated |
+
+**Risk.** An authenticated user guesses a document UUID and attempts to read
+metadata, download binary files, edit contents, share permissions, or delete
+documents belonging to another account.
+
+**Mitigation.** Centralized authorization in [`src/services/accessService.js`](src/services/accessService.js)
+resolves document access per request (`resolveDocumentAccess`). Users without
+an explicit grant in `document_permissions` receive `404 Not Found` (preventing
+IDOR existence leakage). An `edit` grant permits reading, downloading, and
+replacing content, but returns `403 Forbidden` if the user attempts to share,
+modify permissions, or delete the document. Administrators have zero implicit
+access to documents (returning `404 Not Found`).
+
+**Residual.** Document owners have full control over their documents. If an owner's
+credentials are compromised, an attacker can access all documents owned by that
+account.
+
+**Tests.** `tests/authorization.test.js`, `tests/permissions.test.js`,
+`tests/documents.test.js`.
+
+---
+
 ## 5. Summary
 
 | Severity | Threat | Status |
@@ -677,12 +797,16 @@ blob and its grants).
 | Critical | T-10 SQL injection | Mitigated |
 | Critical | T-20 Weak secret management | Mitigated |
 | Critical | T-23 Missing transport encryption | **Open — deployment** |
+| Critical | T-27 Production/test database confusion | Mitigated |
+| Critical | T-30 Unauthorized document viewing, editing, downloading and sharing (BOLA/IDOR) | Mitigated |
 | High | T-01 Brute force / credential stuffing | Mitigated |
 | High | T-03 CSRF | Mitigated |
 | High | T-05 The last administrator can be removed | Mitigated |
 | High | T-08 Malicious uploads / content-type spoofing | Mitigated |
 | High | T-11 Path traversal through the storage key | Mitigated |
 | High | T-21 The seed script against a real database | Mitigated |
+| High | T-28 Backup data corruption, plaintext exposure, and unsafe restoration | Mitigated |
+| High | T-29 Audit chain break obscuration and unauthorized chain rewriting | Mitigated |
 | Medium | T-02 Session fixation | Mitigated |
 | Medium | T-12 The audit chain is not tamper-proof | **Residual — accepted** |
 | Medium | T-13 `TRUNCATE` bypasses the append-only trigger | **Residual — accepted** |
