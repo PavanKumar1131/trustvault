@@ -11,6 +11,11 @@ const config = require("./config");
 const authRoutes = require("./routes/auth");
 const documentRoutes = require("./routes/documents");
 const adminRoutes = require("./routes/admin");
+const {
+    requestsRouter,
+    adminRequestsRouter,
+    legacyAuthRouter
+} = require("./routes/requests");
 
 /**
  * Client-safe error messages.
@@ -229,6 +234,7 @@ function createApp(options = {}) {
 
     app.use("/api/auth/login", authLimiter);
     app.use("/api/auth/register", authLimiter);
+    app.use("/api/auth", legacyAuthRouter);
     app.use("/api/auth", authRoutes);
 
     if (config.MOUNT_TEST_ROUTES) {
@@ -238,6 +244,8 @@ function createApp(options = {}) {
     }
 
     app.use("/api/documents", documentRoutes);
+    app.use("/api/requests", requestsRouter);
+    app.use("/api/admin", adminRequestsRouter);
     app.use("/api/admin", adminRoutes);
 
     // ── Health endpoints ──────────────────────────────────────────────────────

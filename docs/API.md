@@ -157,6 +157,47 @@ This document describes the HTTP API surface of TrustVault. All endpoints are se
 - **Responses**:
   - `200 OK`: `{ "users": [{ "id": "uuid", "name": "...", "email": "..." }] }`
 
+### `GET /api/auth/role-upgrade-request`
+- **Auth**: Required.
+- **Description**: Returns the authenticated account's own Viewer → Document Owner request. There is no user-id parameter: an account can only ever read its own request. The deciding administrator's identity is not exposed.
+- **Response `200 OK`**:
+  ```json
+  {
+    "currentRole": "viewer",
+    "request": {
+      "id": "uuid",
+      "status": "pending | approved | rejected",
+      "requestedRole": "document_owner",
+      "justification": "Optional text",
+      "submittedAt": "2026-10-24T10:00:00.000Z",
+      "decidedAt": null,
+      "nextEligibleAt": null
+    },
+    "canSubmit": false,
+    "cooldownEndsAt": null,
+    "serverTime": "2026-10-24T10:00:01.000Z"
+  }
+  ```
+  `request` is `null` when the account has never submitted one. `canSubmit` is `false` while a request is pending, during the seven-day rejection cooldown, or when the account is not a Viewer. All timestamps are server values.
+
+### `POST /api/auth/role-upgrade-request`
+- **Auth**: Required.
+- **Permission**: Active `viewer` accounts only.
+- **CSRF**: Required.
+- **Request Body**:
+  ```json
+  {
+    "role": "document_owner",
+    "justification": "Optional, maximum 500 characters"
+  }
+  ```
+  `role` is optional and may only name `document_owner`; any other value is rejected. Every other field (`userId`, `approverId`, `status`, `decidedBy`, …) is ignored. The server always assigns the requesting account and the `pending` status.
+- **Responses**:
+  - `201 Created`: Request stored as `pending`.
+  - `400 Bad Request`: `INVALID_REQUESTED_ROLE` or `INVALID_JUSTIFICATION`.
+  - `409 Conflict`: `ROLE_NOT_ELIGIBLE` (account is not a Viewer) or `REQUEST_PENDING` (one request is already pending).
+  - `429 Too Many Requests`: `ROLE_UPGRADE_COOLDOWN` after a rejection. The body contains `nextEligibleAt` and the response carries `Retry-After`. The cooldown is evaluated with PostgreSQL's clock; `GET` values are informational only.
+
 ### `POST /api/auth/logout`
 - **Auth**: Optional (cleans up state regardless).
 - **CSRF**: Required if authenticated.
@@ -365,9 +406,52 @@ All routes under `/api/admin` require an authenticated user with `role === "admi
 - **Description**: Returns all distinct actions and users currently present in `audit_logs` for filter dropdowns.
 - **Response `200 OK`**: `{ "actions": [...], "users": [...] }`
 
+### `GET /api/admin/role-upgrade-requests`
+- **Description**: Returns role-upgrade requests for administrator review. Defaults to pending requests, oldest first.
+- **Query Parameters**:
+  - `status`: `pending` (default), `approved`, `rejected`, `resolved` (both decided states, newest first), or `all`.
+  - `limit`: 1–100 (default 50).
+  - `offset`: 0 or greater.
+- **Response `200 OK`**:
+  ```json
+  {
+    "requests": [
+      {
+        "id": "uuid",
+        "requester": { "id": "uuid", "name": "...", "email": "...", "role": "viewer", "isDisabled": false },
+        "requestedRole": "document_owner",
+        "status": "pending",
+        "justification": "Optional text",
+        "submittedAt": "2026-10-24T10:00:00.000Z",
+        "decidedAt": null,
+        "decidedBy": null,
+        "nextEligibleAt": null
+      }
+    ],
+    "total": 1,
+    "status": "pending",
+    "limit": 50,
+    "offset": 0
+  }
+  ```
+
+### `POST /api/admin/role-upgrade-requests/:id/approve`
+- **Description**: Approves a pending request and makes the requester a `document_owner`. The account row and request row are locked inside one transaction; the decision, role change and audit entry commit together. Only one concurrent decision can succeed.
+- **Responses**:
+  - `200 OK`: `{ "message": "...", "request": { ... }, "user": { ... } }`
+  - `400 Bad Request`: Invalid request id.
+  - `403 Forbidden`: `SELF_DECISION` — an administrator cannot decide their own request.
+  - `404 Not Found`: Request does not exist.
+  - `409 Conflict`: `REQUEST_NOT_PENDING` (already decided) or `REQUESTER_ROLE_CHANGED` (the requester is no longer a Viewer).
+  - `500 Internal Server Error`: The transaction was rolled back, including the role change and audit entry.
+
+### `POST /api/admin/role-upgrade-requests/:id/reject`
+- **Description**: Rejects a pending request without changing the requester's role and starts a seven-day cooldown. The decision and its audit entry commit together.
+- **Responses**: The same status codes as approval. `nextEligibleAt` is returned on the decided request.
+
 ### `GET /api/admin/users`
 - **Description**: Returns full system user directory with document counts, active grants, and account status.
-- **Query Parameters**: `limit` (1–100), `offset` (0+).
+- **Query Parameters**: `limit` (1-100), `offset` (0+).
 - **Response `200 OK`**: `{ "users": [...], "total": 14 }`
 
 ### `POST /api/admin/users`
@@ -388,15 +472,16 @@ All routes under `/api/admin` require an authenticated user with `role === "admi
 
 ### `PATCH /api/admin/users/:id/role`
 - **CSRF**: Required.
-- **Description**: Changes the role of an existing account.
+- **Description**: Changes the role of an existing account. If the account has a pending role-upgrade request, the direct change settles it atomically: assigning `document_owner` approves the request, and any other role rejects it. The role change, the request resolution and both audit entries commit together.
 - **Request Body**: `{ "role": "viewer | document_owner | admin" }`
 - **Safety Checks**:
   - Administrator cannot change their own role.
   - Demoting an administrator is rejected if they are the last active administrator.
 - **Responses**:
-  - `200 OK`: Role updated.
+  - `200 OK`: Role updated. If a pending request was settled, the body also contains `request: { id, status, decidedAt }`.
   - `400 Bad Request`: Self-demotion rejected or invalid role.
   - `409 Conflict`: Last administrator protection triggered.
+  - `500 Internal Server Error`: The transaction was rolled back; neither the role nor the request changed.
 
 ### `PATCH /api/admin/users/:id/disable`
 - **CSRF**: Required.

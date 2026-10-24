@@ -117,10 +117,12 @@ a:hover { color: var(--accent-700); }
    AUTH SCREEN — FULL-PAGE SPLIT PANEL (dark navy brand panel + white form panel)
    ═══════════════════════════════════════════════════════════════════════════ */
 .auth-screen {
-    width: 100vw;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    height: 100svh;
     min-height: 100vh;
     min-height: 100dvh;
-    min-height: 100svh;
     margin: 0;
     padding: 0;
     background: #ffffff;
@@ -137,7 +139,7 @@ a:hover { color: var(--accent-700); }
     min-height: 100dvh;
     min-height: 100svh;
     display: grid;
-    grid-template-columns: 42% 58%;
+    grid-template-columns: 60% 40%;
     background: #ffffff;
     margin: 0;
     padding: 0;
@@ -150,10 +152,12 @@ a:hover { color: var(--accent-700); }
 .auth-panel-brand {
     background: var(--sidebar-bg);
     color: var(--sidebar-text);
-    padding: 56px 48px;
+    padding: clamp(32px, 5vw, 72px);
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+    gap: var(--sp-8);
+    min-width: 0;
     min-height: 100%;
     position: relative;
     border-right: 1px solid var(--sidebar-border);
@@ -162,7 +166,10 @@ a:hover { color: var(--accent-700); }
 .auth-brand-top {
     display: flex;
     flex-direction: column;
-    gap: var(--sp-8);
+    gap: clamp(24px, 4vh, 40px);
+    width: 100%;
+    max-width: 720px;
+    min-width: 0;
 }
 
 .auth-brand {
@@ -201,20 +208,22 @@ a:hover { color: var(--accent-700); }
     flex-direction: column;
     gap: var(--sp-3);
     margin-top: var(--sp-2);
+    max-width: 620px;
 }
 
 .auth-headline {
-    font-size: 26px;
-    line-height: 1.3;
+    font-size: clamp(28px, 2.6vw, 42px);
+    line-height: 1.18;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.7px;
     color: #ffffff;
 }
 
 .auth-support {
-    font-size: 14px;
-    line-height: 1.6;
+    font-size: clamp(14px, 1.15vw, 16px);
+    line-height: 1.65;
     color: var(--sidebar-text);
+    max-width: 560px;
 }
 
 .auth-points {
@@ -223,6 +232,7 @@ a:hover { color: var(--accent-700); }
     flex-direction: column;
     gap: var(--sp-3);
     margin-top: var(--sp-2);
+    max-width: 560px;
 }
 
 .auth-points li {
@@ -256,11 +266,12 @@ a:hover { color: var(--accent-700); }
 /* Right panel — form (crisp white) */
 .auth-panel-form {
     background: #ffffff;
-    padding: 56px 48px;
+    padding: clamp(24px, 3vw, 48px);
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
+    min-width: 0;
     min-height: 100%;
 }
 
@@ -393,6 +404,7 @@ a:hover { color: var(--accent-700); }
 }
 
 input[type="text"],
+input[type="search"],
 input[type="email"],
 input[type="password"],
 input[type="file"],
@@ -642,51 +654,148 @@ select { cursor: pointer; appearance: auto; }
     stroke: var(--accent-400);
 }
 
-/* Sidebar footer */
+.nav-count-badge {
+    margin-left: auto;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--danger-600, #b42318);
+    color: #fff;
+    font-size: var(--text-xs);
+    font-weight: 700;
+    line-height: 1.5;
+    text-align: center;
+}
+
+/* Sidebar footer — account identity */
 .sidebar-footer {
+    margin-top: auto;
+    flex-shrink: 0;
     border-top: 1px solid var(--sidebar-border);
-    padding: var(--sp-4) var(--sp-4);
+    padding: 14px;
     background: rgba(0, 0, 0, 0.15);
 }
 
 .sidebar-user {
     display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-width: 0;
+}
+
+.user-avatar {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--sp-2);
+    justify-content: center;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(45, 212, 191, 0.1);
+    border: 1px solid rgba(45, 212, 191, 0.3);
+    color: var(--accent-400);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
 }
 
 .user-info {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
+    flex: 1;
     min-width: 0;
+    gap: 2px;
 }
 
 .user-signed-in {
-    font-size: 11px;
-    color: #64748b;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.65px;
+    text-transform: uppercase;
+    color: var(--sidebar-muted);
     line-height: 1.2;
 }
 
 .user-email {
+    display: block;
+    max-width: 100%;
     font-size: 12px;
     font-weight: 600;
     color: #ffffff;
+    line-height: 1.35;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    margin-top: 2px;
 }
 
 .user-role-badge {
-    font-size: 11px;
-    color: #94a3b8;
-    margin-top: 2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    margin-top: 3px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(45, 212, 191, 0.1);
+    border: 1px solid rgba(45, 212, 191, 0.22);
+    color: var(--accent-400);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.user-role-badge svg {
+    flex: 0 0 auto;
 }
 
 .sidebar-actions {
-    display: flex;
-    gap: var(--sp-1);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.sidebar-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 30px;
+    padding: 5px 8px;
+    border: 1px solid var(--sidebar-border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--sidebar-text);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.sidebar-action:hover {
+    background: var(--sidebar-hover-bg);
+    border-color: #3a4657;
+    color: #ffffff;
+}
+
+.sidebar-action:focus-visible {
+    outline: 2px solid var(--accent-400);
+    outline-offset: 2px;
+}
+
+.sidebar-action svg {
+    flex: 0 0 auto;
+}
+
+.sidebar-action-signout:hover {
+    background: rgba(220, 38, 38, 0.1);
+    border-color: rgba(248, 113, 113, 0.45);
+    color: #fca5a5;
 }
 
 /* Main content */
@@ -890,6 +999,8 @@ td.td-actions { text-align: right; white-space: nowrap; }
     padding: 8px 0;
     box-shadow: none !important;
     min-width: 0;
+    flex: 1;
+    width: 100%;
 }
 .search-box input:focus { box-shadow: none !important; }
 
@@ -901,6 +1012,50 @@ td.td-actions { text-align: right; white-space: nowrap; }
 .filter-group select {
     width: auto;
     min-width: 140px;
+}
+
+/* Admin → Users filters */
+.users-filters {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(150px, 190px) minmax(160px, 200px) auto;
+    gap: var(--sp-3);
+    align-items: end;
+    margin-bottom: var(--sp-3);
+}
+
+.users-filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+    min-width: 0;
+}
+
+.users-filter-field label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.users-filter-field .search-box {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+}
+
+.users-filter-field select {
+    width: 100%;
+    min-width: 0;
+}
+
+.users-clear-filters {
+    min-height: 38px;
+    white-space: nowrap;
+}
+
+.users-result-count {
+    margin-bottom: var(--sp-3);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1170,6 +1325,57 @@ td.td-actions { text-align: right; white-space: nowrap; }
     background: #fff1d5;
     border-color: #f0d9a8;
     border-left: 4px solid #8a5a00;
+    padding: 14px 16px;
+}
+
+.audit-banner-card.integrity.is-valid {
+    background: #f0fdf9;
+    border-color: #a7f3d0;
+    border-left-color: var(--success);
+}
+
+.audit-banner-card.integrity.is-invalid {
+    background: #fdece9;
+    border-color: #f5c6c0;
+    border-left-color: var(--danger);
+}
+
+/* A documented historical incident is a real failure, but it is preserved
+   and explained, so it keeps the restrained amber accent. */
+.audit-banner-card.integrity.is-invalid.is-incident {
+    background: #fff1d5;
+    border-color: #f0d9a8;
+    border-left-color: #8a5a00;
+}
+
+.integrity-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+}
+
+.integrity-summary {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.integrity-head .banner-title {
+    margin-bottom: 3px;
+}
+
+.audit-banner-card.integrity .banner-desc {
+    font-size: var(--text-xs);
+    font-weight: 500;
+    line-height: 1.5;
+    color: #4b3f24;
+}
+
+.integrity-action {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    background: #ffffff;
 }
 
 .banner-title {
@@ -1185,6 +1391,14 @@ td.td-actions { text-align: right; white-space: nowrap; }
 /* The integrity heading follows the real verification result. */
 .audit-banner-card.integrity.is-valid .banner-title { color: var(--success); }
 .audit-banner-card.integrity.is-invalid .banner-title { color: var(--danger); }
+
+/* The detail rows sit inside the alert and stay visually subordinate. */
+.audit-banner-card.integrity .chain-status-ext {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(138, 90, 0, 0.18);
+    gap: 2px;
+}
 
 .banner-desc {
     font-size: var(--text-sm);
@@ -1400,6 +1614,26 @@ td.td-actions { text-align: right; white-space: nowrap; }
     gap: var(--sp-1);
 }
 
+/* Compact server-driven rows inside the audit summary alert. */
+.chain-status-card.is-compact {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    padding: 3px 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+}
+
+.chain-status-card.is-compact .chain-status-row {
+    width: 100%;
+}
+
+.chain-status-card.is-compact .chain-status-label {
+    font-size: 11px;
+}
+
 .chain-status-row {
     display: flex;
     align-items: center;
@@ -1577,6 +1811,170 @@ td.td-actions { text-align: right; white-space: nowrap; }
     align-items: start;
 }
 
+/* Profile → Document Owner access request */
+.role-request-card {
+    margin-top: var(--sp-2);
+}
+
+.role-request-loading {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.role-request-desc {
+    margin-bottom: var(--sp-3);
+    color: var(--text-secondary);
+}
+
+.role-request-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-5);
+    margin: 0 0 var(--sp-4);
+}
+
+.role-request-meta > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.role-request-meta dt {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.role-request-meta dd {
+    margin: 0;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.role-request-card textarea {
+    width: 100%;
+}
+
+.role-request-note {
+    margin-top: var(--sp-3);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.role-request-note:empty {
+    display: none;
+}
+
+.label-optional {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+/* Admin → Users: role upgrade review */
+.role-review-card .card-header-row {
+    align-items: flex-start;
+    gap: var(--sp-4);
+}
+
+.card-subtitle {
+    margin-top: 2px;
+    font-size: var(--text-sm);
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+.role-review-card .table-container {
+    margin-bottom: var(--sp-4);
+}
+
+.role-review-card .data-table td {
+    vertical-align: top;
+}
+
+.role-review-requester-name {
+    display: block;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.role-review-requester-email {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+}
+
+.role-review-justification {
+    max-width: 380px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text-secondary);
+}
+
+.role-review-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+
+.role-review-recent h4 {
+    margin-bottom: var(--sp-2);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.role-review-recent-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+}
+
+.role-review-recent-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+    font-size: var(--text-sm);
+}
+
+.role-review-recent-meta {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+}
+
+.muted-note {
+    font-size: var(--text-sm);
+    color: var(--text-tertiary);
+}
+
+/* Unified requests views */
+.requests-card { margin-top: var(--sp-2); }
+.requests-count-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--sp-4);
+    margin-bottom: var(--sp-4);
+}
+.request-count-card { display: flex; flex-direction: column; gap: var(--sp-2); }
+.request-count-card span { color: var(--text-secondary); font-size: var(--text-sm); }
+.request-count-card strong { color: var(--text-primary); font-size: var(--text-xl); }
+.requests-filters { margin-top: var(--sp-3); }
+.request-decision-details { min-width: 180px; max-width: 360px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.request-reject-form { display: grid; min-width: 220px; gap: var(--sp-2); }
+.request-reject-form textarea { width: 100%; }
+.request-reject-form label { color: var(--text-secondary); font-size: var(--text-xs); }
+.role-request-form { margin-top: var(--sp-4); }
+.role-request-form textarea { width: 100%; }
+.role-request-form button:disabled { opacity: .6; cursor: not-allowed; }
+.badge-cancelled { background: var(--badge-read-bg); color: var(--badge-read-fg); border-color: var(--border); }
+
 /* Status / role badges */
 .badge-status {
     display: inline-flex;
@@ -1599,6 +1997,24 @@ td.td-actions { text-align: right; white-space: nowrap; }
     background: var(--badge-refused-bg);
     color: var(--badge-refused-fg);
     border-color: var(--badge-refused-border);
+}
+
+.badge-pending {
+    background: var(--badge-example-bg);
+    color: var(--badge-example-fg);
+    border-color: var(--badge-example-border);
+}
+
+.badge-approved {
+    background: var(--badge-allowed-bg);
+    color: var(--badge-allowed-fg);
+    border-color: var(--badge-allowed-border);
+}
+
+.badge-rejected {
+    background: var(--badge-read-bg);
+    color: var(--text-secondary);
+    border-color: var(--border);
 }
 
 .badge-admin {
@@ -1837,6 +2253,44 @@ textarea:focus-visible,
 /* ═══════════════════════════════════════════════════════════════════════════
    RESPONSIVE IMPROVEMENTS
    ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 1180px) {
+    /* A 40% form panel becomes too narrow below this width, so the split
+       becomes a readable single-column stack. */
+    .auth-layout {
+        grid-template-columns: 1fr;
+        max-width: 100%;
+    }
+    .auth-panel-brand {
+        min-height: 0;
+        padding: var(--sp-6) var(--sp-8);
+        gap: var(--sp-5);
+        border-right: none;
+        border-bottom: 1px solid var(--sidebar-border);
+    }
+    .auth-brand-top {
+        gap: var(--sp-4);
+        max-width: 620px;
+    }
+    .auth-hero {
+        margin-top: 0;
+    }
+    .auth-headline {
+        font-size: clamp(24px, 4vw, 32px);
+    }
+    .auth-support {
+        font-size: var(--text-base);
+    }
+    .auth-points,
+    .auth-brand-footer {
+        display: none;
+    }
+    .auth-panel-form {
+        min-height: 0;
+        padding: var(--sp-8) var(--sp-6);
+        justify-content: flex-start;
+    }
+}
+
 @media (max-width: 1024px) {
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -1857,44 +2311,21 @@ textarea:focus-visible,
     .detail-grid, .profile-grid, .audit-summary-grid {
         grid-template-columns: 1fr;
     }
+    .requests-count-grid { grid-template-columns: 1fr; }
     .form-row {
         grid-template-columns: 1fr;
     }
     .main-content {
         padding: var(--sp-6);
     }
-    /* Split-panel auth collapses to a single column; the brand panel is
-       trimmed so the form stays reachable on a tablet/mobile. */
-    .auth-layout {
-        grid-template-columns: 1fr;
-        max-width: 100%;
-        min-height: 100vh;
-        min-height: 100dvh;
+    .users-filters {
+        grid-template-columns: 1fr 1fr;
     }
-    .auth-panel-brand {
-        padding: var(--sp-6) var(--sp-6);
-        gap: var(--sp-4);
-        border-right: none;
-        border-bottom: 1px solid var(--sidebar-border);
+    .users-filter-search {
+        grid-column: 1 / -1;
     }
-    .auth-brand-top {
-        gap: var(--sp-4);
-    }
-    .auth-hero {
-        margin-top: 0;
-    }
-    .auth-headline {
-        font-size: 20px;
-    }
-    .auth-points {
-        display: none;
-    }
-    .auth-brand-footer {
-        display: none;
-    }
-    .auth-panel-form {
-        padding: var(--sp-8) var(--sp-6);
-        justify-content: flex-start;
+    .users-clear-filters {
+        justify-self: start;
     }
 }
 
@@ -1911,12 +2342,20 @@ textarea:focus-visible,
     .nav-item { justify-content: center; padding: 12px 0; }
     .sidebar-brand { justify-content: center; padding: var(--sp-4) 0; }
     .sidebar-footer { padding: var(--sp-2) var(--sp-1); }
-    .sidebar-user { justify-content: center; }
+    .sidebar-user { justify-content: center; gap: 0; }
     .sidebar-actions {
+        display: flex;
         flex-direction: column;
         align-items: center;
         gap: var(--sp-1);
+        margin-top: var(--sp-2);
     }
+    .sidebar-action {
+        width: 36px;
+        min-height: 32px;
+        padding: 0;
+    }
+    .sidebar-action span { display: none; }
 
     .main-content { padding: var(--sp-4); }
     .stats-grid {
@@ -1965,6 +2404,17 @@ textarea:focus-visible,
     .date-input {
         min-width: 0;
         width: 100%;
+    }
+    .users-filters {
+        grid-template-columns: 1fr;
+        gap: var(--sp-2);
+    }
+    .users-filter-search {
+        grid-column: auto;
+    }
+    .users-clear-filters {
+        width: 100%;
+        justify-self: stretch;
     }
     .auth-screen {
         padding: 0;

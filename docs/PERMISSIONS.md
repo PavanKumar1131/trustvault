@@ -26,6 +26,19 @@ Public self-registration is handled via `POST /api/auth/register`:
 - **Client Role Parameter Ignored**: Any `role` parameter supplied in the registration request payload is ignored. Users cannot self-promote to `document_owner` or `admin`.
 - **Administrative Role Elevation**: Account promotion to `document_owner` or `admin` must be performed by an existing administrator through the protected endpoint `PATCH /api/admin/users/:id/role`.
 
+### Viewer → Document Owner Upgrade Workflow
+
+A Viewer may ask for Document Owner access from the Profile page instead of waiting for an administrator to change the role directly.
+
+- **Request scope**: Only `document_owner` can be requested. The server fixes the requested role, the requester and the timestamps; client-supplied `userId`, `approverId`, status or role values cannot grant anything.
+- **One pending request**: A partial unique index on `(user_id) WHERE status = 'pending'` makes concurrent duplicate submissions impossible. A second submission is answered with `409 REQUEST_PENDING`.
+- **Status is server-authoritative**: `GET /api/auth/role-upgrade-request` returns only the caller's own latest request. No endpoint accepts another user's id, and the deciding administrator's identity is not exposed to the requester.
+- **Rejection cooldown**: A rejected requester may submit again after seven days. The cooldown is evaluated with PostgreSQL's `NOW()` on submission; the browser's displayed time is informational only. Retries during the cooldown receive `429 ROLE_UPGRADE_COOLDOWN` with `nextEligibleAt`.
+- **Review**: Only an active administrator may list and decide requests. Administrators cannot decide their own request. A decision locks the requester row and the request row in one transaction; concurrent decisions produce exactly one success, and a resolved request cannot be decided again.
+- **Direct role changes settle pending requests**: `PATCH /api/admin/users/:id/role` resolves a pending request in the same transaction. Assigning `document_owner` approves it; every other role assignment rejects it. If the role changes while a request is still pending, that request is settled immediately; a later request approval cannot overwrite the independently assigned role. Requests that were already approved or rejected remain in their recorded state.
+- **Audit integration**: Submission, approval, rejection and denied decisions are appended through the canonical audit service with server-derived actor and target ids. If the required audit append fails, the request/role change is rolled back. This feature adds no audit-history rebuild, truncation, rehash or rewrite; existing records and incident `INC-2026-438` remain preserved.
+- **Immediate effect**: `requireAuth` reloads the account row on every protected request, so an approved role applies to the existing session without signing out.
+
 ---
 
 ## 3. Document Authorization Matrix

@@ -482,7 +482,10 @@ router.get("/users", requireAuth, async (req, res) => {
     }
 });
 
-// ── POST /api/auth/logout ─────────────────────────────────────────────────────
+// ── GET /api/auth/role-upgrade-request — Own request status ──────────────────
+// Returns the authenticated user's latest request and the server-computed
+// eligibility. The endpoint deliberately has no user-id parameter: one account
+// can only ever read its own request history.
 router.post("/logout", (req, res) => {
     if (!req.session) {
         return res.status(204).end();

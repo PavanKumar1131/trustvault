@@ -2,12 +2,17 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const pool = require("../db");
 const { requireAuth } = require("../middleware/auth");
-const { writeAuditLog, verifyAuditChain } = require("../services/auditService");
+const {
+    writeAuditLog,
+    verifyAuditChain,
+    lockAuditChain
+} = require("../services/auditService");
 const { escapeLikePattern } = require("../services/documentService");
 const {
     passwordProblem: validatePassword,
     generateTemporaryPassword
 } = require("../services/passwordPolicy");
+const { resolvePendingUpgradeRequest } = require("../services/requestService");
 
 const router = express.Router();
 
@@ -25,6 +30,16 @@ const VALID_ROLES = new Set(["admin", "document_owner", "viewer"]);
  */
 const CREATEABLE_ROLES = new Set(["document_owner", "viewer"]);
 
+/** Account-status values accepted by the user-list filter. */
+const VALID_USER_STATUSES = new Set(["active", "disabled"]);
+
+/** Bounds for the user-list search and pagination parameters. */
+const MAX_USER_SEARCH_LENGTH = 100;
+const MAX_USER_PAGE_SIZE = 100;
+const MAX_USER_PAGE = 10000;
+const MAX_USER_OFFSET = 1000000;
+const DEFAULT_USER_PAGE_SIZE = 50;
+
 /** Advisory lock guarding the "at least one active administrator" invariant. */
 const ADMIN_INVARIANT_LOCK_KEY = 918273645;
 
@@ -33,10 +48,104 @@ function validUuid(id) {
 }
 
 /**
- * Parses a date filter into a Date.
+ * Builds an error that the user-list route answers with 400 instead of 500.
+ * The message is deliberately about the query parameter, never about SQL.
+ */
+function invalidUserQuery(message) {
+    const error = new Error(message);
+    error.status = 400;
+    return error;
+}
+
+/**
+ * Validates the query string of GET /api/admin/users.
  *
- * @param {unknown} value
- * @returns {Date|null} null when the value is empty or not a valid date
+ * The endpoint historically accepted `limit` and `offset`; those stay
+ * supported. `page` and `pageSize` are an additive, easier to reason about
+ * alternative. Supplying either page parameter selects the page-based mode.
+ * Every user supplied value is checked before it reaches a query.
+ */
+function parseUserListQuery(query) {
+    const input = query || {};
+
+    const readText = (name) => {
+        const value = input[name];
+        if (value === undefined) return "";
+        if (typeof value !== "string") {
+            throw invalidUserQuery(name + " must be a single text value");
+        }
+        return value.trim();
+    };
+
+    const search = readText("search");
+    if (search.length > MAX_USER_SEARCH_LENGTH) {
+        throw invalidUserQuery(
+            "search must be at most " + MAX_USER_SEARCH_LENGTH + " characters"
+        );
+    }
+
+    const role = readText("role").toLowerCase();
+    if (role && !VALID_ROLES.has(role)) {
+        throw invalidUserQuery("role must be one of: admin, document_owner, viewer");
+    }
+
+    const status = readText("status").toLowerCase();
+    if (status && !VALID_USER_STATUSES.has(status)) {
+        throw invalidUserQuery("status must be one of: active, disabled");
+    }
+
+    const pageMode = input.page !== undefined || input.pageSize !== undefined;
+    let limit;
+    let offset;
+    let page;
+    let pageSize;
+
+    if (pageMode) {
+        const readPageNumber = (name, fallback, max) => {
+            const value = input[name];
+            if (value === undefined || value === "") return fallback;
+            if (typeof value !== "string" || !/^\d+$/.test(value)) {
+                throw invalidUserQuery(name + " must be a positive integer");
+            }
+            const parsed = Number(value);
+            if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
+                throw invalidUserQuery(name + " must be between 1 and " + max);
+            }
+            return parsed;
+        };
+
+        page = readPageNumber("page", 1, MAX_USER_PAGE);
+        pageSize = readPageNumber("pageSize", DEFAULT_USER_PAGE_SIZE, MAX_USER_PAGE_SIZE);
+        limit = pageSize;
+        offset = (page - 1) * pageSize;
+
+        if (offset > MAX_USER_OFFSET) {
+            throw invalidUserQuery("page is out of range");
+        }
+    } else {
+        // Preserve the original contract: values that cannot be parsed fall
+        // back to the defaults, and the result is clamped to a safe bound.
+        limit = Math.min(
+            Math.max(parseInt(input.limit || "100", 10) || 100, 1),
+            500
+        );
+        offset = Math.min(
+            Math.max(parseInt(input.offset || "0", 10) || 0, 0),
+            MAX_USER_OFFSET
+        );
+        page = Math.floor(offset / limit) + 1;
+        pageSize = limit;
+    }
+
+    return { search, role, status, limit, offset, page, pageSize };
+}
+
+/**
+ * Validates the query string of GET /api/admin/role-upgrade-requests.
+ *
+ * The review panel asks for `pending` and then for the most recent
+ * `resolved` entries, so both filters are supported. An invalid status is
+ * rejected rather than silently widened to "all".
  */
 function parseDateFilter(value) {
     if (typeof value !== "string" || !value.trim()) return null;
@@ -368,14 +477,40 @@ router.get("/overview", async (req, res) => {
     }
 });
 
-// ── GET /api/admin/users — Full user list with document counts ────────────────
+// ── GET /api/admin/users — Filtered, paginated user list ──────────────────────
+// Filters: search (name/email, case-insensitive, trimmed), role, status.
+// Pagination: page/pageSize (page-based) or the original limit/offset pair.
+// Both are server-side; the response `total` is the number of matching users.
 router.get("/users", async (req, res) => {
     try {
-        const limit = Math.min(
-            Math.max(parseInt(req.query.limit || "100", 10) || 100, 1),
-            500
-        );
-        const offset = Math.max(parseInt(req.query.offset || "0", 10) || 0, 0);
+        const query = parseUserListQuery(req.query);
+        const params = [];
+        const where = [];
+
+        if (query.search) {
+            // The wildcards in the search term are matched literally. The
+            // value itself still travels as a bound parameter.
+            params.push("%" + escapeLikePattern(query.search) + "%");
+            const idx = "$" + params.length;
+            where.push(
+                "(u.name ILIKE " + idx + " ESCAPE '\\'" +
+                " OR u.email ILIKE " + idx + " ESCAPE '\\')"
+            );
+        }
+
+        if (query.role) {
+            params.push(query.role);
+            where.push("u.role = $" + params.length);
+        }
+
+        if (query.status) {
+            params.push(query.status === "disabled");
+            where.push("u.is_disabled = $" + params.length);
+        }
+
+        const whereSql = where.length > 0 ? " WHERE " + where.join(" AND ") : "";
+        const countParams = params.slice();
+        const listParams = params.concat([query.limit, query.offset]);
 
         const [usersRes, totalRes] = await Promise.all([
             pool.query(
@@ -389,21 +524,33 @@ router.get("/users", async (req, res) => {
                     COUNT(d.id)::int AS document_count
                  FROM users u
                  LEFT JOIN documents d ON d.owner_id = u.id
+                 ${whereSql}
                  GROUP BY u.id
-                 ORDER BY u.created_at DESC
-                 LIMIT $1 OFFSET $2`,
-                [limit, offset]
+                 ORDER BY u.created_at DESC, u.id ASC
+                 LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+                listParams
             ),
-            pool.query("SELECT COUNT(*)::int AS total FROM users")
+            pool.query(
+                "SELECT COUNT(*)::int AS total FROM users u" + whereSql,
+                countParams
+            )
         ]);
+
+        const total = totalRes.rows[0].total;
 
         return res.json({
             users: usersRes.rows,
-            total: totalRes.rows[0].total,
-            limit,
-            offset
+            total,
+            limit: query.limit,
+            offset: query.offset,
+            page: query.page,
+            pageSize: query.pageSize,
+            hasMore: query.offset + usersRes.rows.length < total
         });
     } catch (error) {
+        if (error.status === 400) {
+            return res.status(400).json({ message: error.message });
+        }
         console.error("Admin user list failed:", error.message);
         return res.status(500).json({ message: "Unable to retrieve user list" });
     }
@@ -537,9 +684,10 @@ router.post("/users", async (req, res) => {
     }
 });
 
-// ── PATCH /api/admin/users/:id/role — Promote or demote a user ───────────────
-// Admins can change any user's role except their own.
-// Allowed roles: admin, document_owner, viewer
+// ── GET /api/admin/role-upgrade-requests — Review queue ──────────────────────
+// Defaults to pending requests (oldest first). `status=resolved` returns the
+// most recently decided requests so the Admin console can show who resolved
+// them and when.
 router.patch("/users/:id/role", async (req, res) => {
     const targetId = req.params.id;
 
@@ -575,6 +723,12 @@ router.patch("/users/:id/role", async (req, res) => {
 
     try {
         await client.query("BEGIN");
+
+        // Keep the workflow lock order consistent: audit chain → administrator
+        // invariant → account row → request row. Submissions and decisions
+        // start with the audit lock, so acquiring it here prevents a deadlock
+        // between a direct role change and a concurrent review.
+        await lockAuditChain(client);
 
         // Serialise every role/status change so the "at least one active
         // administrator" invariant cannot be broken by concurrent requests.
@@ -620,23 +774,83 @@ router.patch("/users/:id/role", async (req, res) => {
             [targetRole, targetId]
         );
 
-        await client.query("COMMIT");
+        // A direct role change also settles any request that is still pending,
+        // so the account can never end up with a pending request whose outcome
+        // contradicts the actual role. Promoting to document_owner approves it;
+        // every other assignment rejects it.
+        const requestDecision =
+            targetRole === "document_owner" ? "approved" : "rejected";
+        const resolvedRequest = await resolvePendingUpgradeRequest(client, {
+            userId: targetId,
+            status: requestDecision,
+            decidedBy: req.user.id
+        });
 
-        await writeAuditLog(req, "admin_user_role_change", "success", null, {
+        const auditDetails = {
             targetUserId: targetId,
             targetEmail: updated.rows[0].email,
             previousRole,
             newRole: targetRole
-        }, targetId);
+        };
+
+        if (resolvedRequest) {
+            auditDetails.pendingRequestId = resolvedRequest.id;
+            auditDetails.pendingRequestOutcome = requestDecision;
+        }
+
+        // The role update, the pending-request resolution and both audit
+        // events commit together. If an append fails, nothing is changed.
+        await writeAuditLog(
+            req,
+            "admin_user_role_change",
+            "success",
+            null,
+            auditDetails,
+            targetId,
+            client
+        );
+
+        if (resolvedRequest) {
+            await writeAuditLog(
+                req,
+                requestDecision === "approved"
+                    ? "role_upgrade_request_approved"
+                    : "role_upgrade_request_rejected",
+                "success",
+                null,
+                {
+                    requestId: resolvedRequest.id,
+                    requestedRole: resolvedRequest.requested_role,
+                    previousRole,
+                    newRole: targetRole,
+                    viaDirectRoleChange: true
+                },
+                targetId,
+                client
+            );
+        }
+
+        await client.query("COMMIT");
 
         return res.json({
-            message: "User role updated",
-            user: updated.rows[0]
+            message: resolvedRequest
+                ? "User role updated and pending upgrade request resolved"
+                : "User role updated",
+            user: updated.rows[0],
+            request: resolvedRequest
+                ? {
+                      id: resolvedRequest.id,
+                      status: requestDecision,
+                      decidedAt: resolvedRequest.decided_at
+                  }
+                : null
         });
     } catch (error) {
         await client.query("ROLLBACK").catch(() => {});
         console.error("Admin role change failed:", error.message);
-        return res.status(500).json({ message: "Unable to update user role" });
+        return res.status(500).json({
+            message: "Unable to update user role. Nothing was changed."
+        });
     } finally {
         client.release();
     }

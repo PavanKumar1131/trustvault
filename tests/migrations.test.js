@@ -43,6 +43,14 @@ describe("TrustVault schema and migrations", () => {
         expect(fs.readFileSync(SCHEMA_PATH, "utf8")).toBe(canonical);
     });
 
+    test("the migration never invokes an audit-chain rebuild", () => {
+        const source = fs.readFileSync(
+            path.join(__dirname, "..", "src", "scripts", "migrate.js"),
+            "utf8"
+        );
+        expect(source).not.toMatch(/rebuildAuditChainIfNeeded/);
+    });
+
     // ══════════════════════════════════════════════════════════════════════
     test("2. The canonical schema contains every required object", () => {
         const schema = fs.readFileSync(SCHEMA_SOURCE, "utf8");
@@ -55,7 +63,8 @@ describe("TrustVault schema and migrations", () => {
             "audit_logs",
             "audit_chain_state",
             "audit_incident_annotations",
-            "user_sessions"
+            "user_sessions",
+            "requests"
         ]) {
             expect(schema).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
         }
@@ -107,6 +116,7 @@ describe("TrustVault schema and migrations", () => {
                 "document_blobs",
                 "document_permissions",
                 "documents",
+                "requests",
                 "user_sessions",
                 "users"
             ]) {
@@ -173,7 +183,7 @@ describe("TrustVault schema and migrations", () => {
                  FROM information_schema.tables
                  WHERE table_schema = 'public'`
             );
-            expect(tables.rows[0].count).toBe(8);
+            expect(tables.rows[0].count).toBe(9);
 
             const uniqueConstraints = await probe.query(
                 `SELECT COUNT(*)::int AS count FROM pg_constraint
@@ -192,7 +202,72 @@ describe("TrustVault schema and migrations", () => {
     });
 
     // ══════════════════════════════════════════════════════════════════════
-    test("5. The audit trail of a fresh database starts empty but consistent", async () => {
+    test("5. Legacy role-upgrade rows are preserved in requests and the old table is removed", async () => {
+        const admin = createPool(config.DATABASE_URL);
+        let probe = null;
+
+        try {
+            await admin.query(`DROP DATABASE IF EXISTS "${PROBE_DATABASE}" WITH (FORCE)`);
+            await admin.query(`CREATE DATABASE "${PROBE_DATABASE}"`);
+            probe = createPool(buildProbeConnectionString());
+            await migrate({ pool: probe, rebuildChain: false });
+
+            const user = await probe.query(
+                `INSERT INTO users (name, email, password_hash, role)
+                 VALUES ('Legacy requester', 'legacy-requester@example.com', 'hash', 'viewer')
+                 RETURNING id`
+            );
+            await probe.query(`
+                CREATE TABLE role_upgrade_requests (
+                    id UUID PRIMARY KEY,
+                    user_id UUID NOT NULL,
+                    requested_role VARCHAR(30) NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    justification TEXT,
+                    decided_by UUID,
+                    submitted_at TIMESTAMPTZ NOT NULL,
+                    decided_at TIMESTAMPTZ
+                )
+            `);
+            const legacy = await probe.query(
+                `INSERT INTO role_upgrade_requests
+                    (id, user_id, requested_role, status, justification, submitted_at, decided_at)
+                 VALUES (gen_random_uuid(), $1, 'document_owner', 'rejected', 'retained reason',
+                         NOW() - INTERVAL '10 days', NOW() - INTERVAL '9 days')
+                 RETURNING id, user_id, submitted_at, decided_at`,
+                [user.rows[0].id]
+            );
+
+            await migrate({ pool: probe, rebuildChain: false });
+
+            const copied = await probe.query(
+                `SELECT id, requester_id, request_type, requested_role, reason,
+                        status, reviewer_role, submitted_at, decided_at
+                 FROM requests WHERE id = $1`,
+                [legacy.rows[0].id]
+            );
+            expect(copied.rows).toHaveLength(1);
+            expect(copied.rows[0]).toMatchObject({
+                id: legacy.rows[0].id,
+                requester_id: user.rows[0].id,
+                request_type: "document_owner_upgrade",
+                requested_role: "document_owner",
+                reason: "retained reason",
+                status: "rejected",
+                reviewer_role: "admin"
+            });
+            expect(copied.rows[0].submitted_at).toEqual(legacy.rows[0].submitted_at);
+            expect(copied.rows[0].decided_at).toEqual(legacy.rows[0].decided_at);
+            const legacyTable = await probe.query("SELECT to_regclass('public.role_upgrade_requests') AS name");
+            expect(legacyTable.rows[0].name).toBeNull();
+        } finally {
+            if (probe) await probe.end().catch(() => {});
+            await admin.query(`DROP DATABASE IF EXISTS "${PROBE_DATABASE}" WITH (FORCE)`).catch(() => {});
+            await admin.end().catch(() => {});
+        }
+    });
+
+    test("6. The audit trail of a fresh database starts empty but consistent", async () => {
         const admin = createPool(config.DATABASE_URL);
         let probe = null;
 

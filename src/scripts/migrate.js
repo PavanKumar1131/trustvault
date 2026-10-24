@@ -7,15 +7,15 @@
  *      created with `IF NOT EXISTS`, so existing databases are left alone;
  *   2. the data upgrades that cannot be expressed in DDL are applied
  *      (legacy permission values, duplicate grants, missing constraints);
- *   3. the audit hash chain is rebuilt if it does not verify.
+ *   3. legacy role-upgrade requests are preserved in the general requests table.
  *
- * The script never drops user data.
+ * Historical audit rows are never rewritten. Legacy request rows are copied,
+ * verified, and only then removed from their former table.
  */
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const pool = require("../db");
-const { rebuildAuditChainIfNeeded } = require("../services/auditService");
 
 const SCHEMA_PATH = path.join(__dirname, "..", "schema.sql");
 
@@ -23,9 +23,7 @@ const SCHEMA_PATH = path.join(__dirname, "..", "schema.sql");
  * Applies the canonical schema and the data upgrades.
  * @param {object} [options]
  * @param {object} [options.pool] Pool to use (defaults to the shared pool)
- * @param {boolean} [options.rebuildChain] Rebuild the audit chain when it is
- *        broken. Disabled by the automated test-suite, which rebuilds it
- *        explicitly where required.
+ * Historical audit rows are never rebuilt or rewritten by this function.
  */
 async function migrate(options = {}) {
     const target = options.pool || pool;
@@ -40,6 +38,54 @@ async function migrate(options = {}) {
 
         // ── 1. Canonical schema ───────────────────────────────────────────────
         await client.query(schema);
+
+        // Migration: requests_generalization_and_role_upgrade_backfill.
+        // Consolidate the former role-upgrade table into the shared request
+        // store. Every old ID and decision timestamp is retained. If a row
+        // cannot be matched after the copy, this transaction aborts before
+        // dropping the legacy table.
+        await client.query(`
+            DO $$
+            DECLARE
+                missing_count BIGINT;
+            BEGIN
+                IF to_regclass('public.role_upgrade_requests') IS NOT NULL THEN
+                    INSERT INTO requests (
+                        id, requester_id, request_type, requested_role,
+                        target_resource_id, requested_permission, reason,
+                        decision_note, status, reviewer_role, reviewer_user_id,
+                        decided_by, submitted_at, decided_at
+                    )
+                    SELECT
+                        id, user_id, 'document_owner_upgrade', requested_role,
+                        NULL, NULL, justification, NULL, status, 'admin', NULL,
+                        decided_by, submitted_at, decided_at
+                    FROM role_upgrade_requests
+                    ON CONFLICT (id) DO NOTHING;
+
+                    SELECT COUNT(*) INTO missing_count
+                    FROM role_upgrade_requests legacy
+                    LEFT JOIN requests current ON current.id = legacy.id
+                    WHERE current.id IS NULL
+                       OR current.requester_id IS DISTINCT FROM legacy.user_id
+                       OR current.request_type IS DISTINCT FROM 'document_owner_upgrade'
+                       OR current.requested_role IS DISTINCT FROM legacy.requested_role
+                       OR current.status IS DISTINCT FROM legacy.status
+                       OR current.reason IS DISTINCT FROM legacy.justification
+                       OR current.decided_by IS DISTINCT FROM legacy.decided_by
+                       OR current.submitted_at IS DISTINCT FROM legacy.submitted_at
+                       OR current.decided_at IS DISTINCT FROM legacy.decided_at;
+
+                    IF missing_count > 0 THEN
+                        RAISE EXCEPTION
+                            'Could not preserve % legacy role-upgrade request(s); source table retained',
+                            missing_count;
+                    END IF;
+
+                    DROP TABLE role_upgrade_requests;
+                END IF;
+            END $$;
+        `);
 
         // ── 2. Legacy columns ─────────────────────────────────────────────────
         // `CREATE TABLE IF NOT EXISTS` does not add columns to an existing
@@ -385,10 +431,6 @@ async function migrate(options = {}) {
         console.log("Database schema and constraints are up to date.");
 
         // ── 6. Audit chain ────────────────────────────────────────────────────
-        if (options.rebuildChain !== false) {
-            await rebuildAuditChainIfNeeded();
-        }
-
         console.log("Migration complete.");
         return { ok: true };
     } catch (error) {

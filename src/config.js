@@ -40,6 +40,42 @@ function databaseNameFromUrl(connectionString) {
     }
 }
 
+function validateTestDatabaseUrl(testUrl, developmentUrl) {
+    const testDatabase = databaseNameFromUrl(testUrl);
+    const developmentDatabase = databaseNameFromUrl(developmentUrl);
+
+    if (!testDatabase) {
+        throw new Error(
+            "FATAL: TEST_DATABASE_URL must contain a database name so the " +
+            "test harness can verify it is isolated from the development database."
+        );
+    }
+
+    if (testDatabase.toLowerCase() === "neondb") {
+        throw new Error(
+            "FATAL: Refusing to run tests against the protected neondb database. " +
+            "TEST_DATABASE_URL must point at a separate test database."
+        );
+    }
+
+    if (developmentDatabase && testDatabase === developmentDatabase) {
+        throw new Error(
+            `FATAL: Refusing to run tests against the development database "${testDatabase}".\n` +
+            "TEST_DATABASE_URL must point at a separate, empty test database."
+        );
+    }
+
+    if (!/test/i.test(testDatabase)) {
+        throw new Error(
+            `FATAL: Refusing to run tests against database "${testDatabase}".\n` +
+            "The test database name must contain the word \"test\" so it cannot " +
+            "be mistaken for the development or production database."
+        );
+    }
+
+    return testDatabase;
+}
+
 function requireProductionEnv() {
     const missing = [];
 
@@ -105,32 +141,13 @@ function resolveDatabaseUrl() {
             );
         }
 
-        const testDatabase = databaseNameFromUrl(testUrl);
-        const devDatabase = databaseNameFromUrl(process.env.DATABASE_URL);
-
-        if (!testDatabase) {
-            throw new Error(
-                "FATAL: TEST_DATABASE_URL must contain a database name so the " +
-                "test harness can verify it is isolated from the development database."
-            );
-        }
-
-        if (devDatabase && testDatabase === devDatabase) {
-            throw new Error(
-                `FATAL: Refusing to run tests against the development database "${testDatabase}".\n` +
-                "TEST_DATABASE_URL must point at a separate, empty test database."
-            );
-        }
-
-        if (!/test/i.test(testDatabase)) {
-            throw new Error(
-                `FATAL: Refusing to run tests against database "${testDatabase}".\n` +
-                "The test database name must contain the word \"test\" so it cannot " +
-                "be mistaken for the development or production database."
-            );
-        }
+        validateTestDatabaseUrl(testUrl, process.env.DATABASE_URL);
 
         return testUrl;
+    }
+
+    if (!IS_PRODUCTION && process.env.TEST_DATABASE_URL && databaseNameFromUrl(process.env.DATABASE_URL) === "neondb") {
+        return process.env.TEST_DATABASE_URL;
     }
 
     return process.env.DATABASE_URL;
@@ -188,5 +205,6 @@ module.exports = {
 
     DEV_SESSION_SECRET,
     MIN_SESSION_SECRET_LENGTH,
-    databaseNameFromUrl
+    databaseNameFromUrl,
+    validateTestDatabaseUrl
 };

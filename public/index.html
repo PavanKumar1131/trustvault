@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/styles.css?v=4.0">
+    <link rel="stylesheet" href="/css/styles.css?v=4.1">
 </head>
 <body>
     <!-- ═══════════════════════════════════════════════════════════════════════
@@ -156,24 +156,34 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     <span>Users</span>
                 </a>
+                <a href="#" class="nav-item" data-view="admin-requests" data-roles="admin" id="nav-admin-requests" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                    <span>Requests</span>
+                    <span id="nav-admin-requests-count" class="nav-count-badge" aria-label="Pending requests" hidden></span>
+                </a>
             </nav>
 
-            <!-- Sidebar footer — account block (rule #1: "Signed in as" + "Role: X") -->
+            <!-- Sidebar footer — signed-in account identity and actions -->
             <div class="sidebar-footer">
                 <div class="sidebar-user" id="sidebar-user">
                     <div class="user-avatar" id="user-avatar-char" aria-hidden="true">U</div>
                     <div class="user-info">
                         <span class="user-signed-in">Signed in as</span>
-                        <span class="user-email" id="sidebar-user-email">you@company.com</span>
-                        <span class="user-role" id="sidebar-role">Role: Viewer</span>
+                        <span class="user-email" id="sidebar-user-email" title="you@company.com">you@company.com</span>
+                        <span class="user-role-badge" id="sidebar-role" data-role="viewer">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            <span id="sidebar-role-text">Viewer</span>
+                        </span>
                     </div>
                 </div>
                 <div class="sidebar-actions">
-                    <button type="button" class="btn-icon" id="btn-account" title="Account" aria-label="Account settings">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <button type="button" class="sidebar-action" id="btn-account" title="Open profile" aria-label="Open profile">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        <span>Profile</span>
                     </button>
-                    <button type="button" class="btn-icon" id="logout-btn" title="Sign out" aria-label="Sign out">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    <button type="button" class="sidebar-action sidebar-action-signout" id="logout-btn" title="Sign out" aria-label="Sign out">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        <span>Sign out</span>
                     </button>
                 </div>
             </div>
@@ -733,6 +743,30 @@
                         </div>
                     </form>
                 </div>
+
+                <section class="card requests-card" id="my-requests" aria-labelledby="my-requests-title">
+                    <div class="card-header-row"><div><h3 id="my-requests-title">My Requests</h3><p class="card-subtitle">Your authenticated request history and status.</p></div></div>
+                    <p id="my-requests-loading" class="muted-note">Loading your requests…</p>
+                    <div id="my-requests-error" class="form-error hidden" role="alert"></div>
+                    <button type="button" class="btn btn-ghost btn-sm hidden" id="my-requests-retry">Retry</button>
+                    <div id="my-requests-content" class="hidden">
+                        <div class="table-container"><table class="data-table compact" aria-label="My requests">
+                            <thead><tr><th>Type</th><th>Requested</th><th>Status</th><th>Submitted</th><th>Decision</th><th>Details</th><th>Action</th></tr></thead>
+                            <tbody id="my-requests-tbody"></tbody>
+                        </table></div>
+                        <p id="my-requests-empty" class="empty-state hidden">You have not submitted any requests.</p>
+                        <p id="my-requests-eligibility" class="form-hint" role="status" aria-live="polite"></p>
+                    </div>
+                    <form id="role-request-form" class="role-request-form" novalidate>
+                        <div class="form-group"><label for="role-request-justification">Why do you need Document Owner access? <span class="label-optional">(optional)</span></label>
+                            <textarea id="role-request-justification" rows="3" maxlength="500" aria-describedby="role-request-feedback" placeholder="Tell an administrator what you need to publish or manage."></textarea>
+                            <p class="form-hint">Up to 500 characters.</p>
+                        </div>
+                        <div class="form-error hidden" id="role-request-feedback" role="alert"></div>
+                        <p id="role-request-disabled-reason" class="form-hint" role="status"></p>
+                        <div class="form-actions"><button type="submit" class="btn btn-primary" id="role-request-submit" disabled>Request Owner access</button></div>
+                    </form>
+                </section>
             </section>
 
             <!-- ═══════════ ADMIN — AUDIT LOG ═══════════ -->
@@ -749,11 +783,15 @@
                         <div class="banner-title worth-look">WORTH A LOOK</div>
                         <div class="banner-desc" id="audit-worth-look-text"></div>
                     </div>
-                    <div class="audit-banner-card integrity" id="audit-integrity-card">
-                        <div class="banner-title integrity" id="audit-integrity-title">INTEGRITY: NOT VERIFIED</div>
-                        <div class="banner-desc" id="audit-integrity-text">Shows the real status once the backend provides it.</div>
+                    <div class="audit-banner-card integrity" id="audit-integrity-card" role="status" aria-live="polite">
+                        <div class="integrity-head">
+                            <div class="integrity-summary">
+                                <div class="banner-title integrity" id="audit-integrity-title">INTEGRITY: NOT VERIFIED</div>
+                                <div class="banner-desc" id="audit-integrity-text">Shows the real status once the backend provides it.</div>
+                            </div>
+                            <button class="btn btn-sm btn-ghost integrity-action" id="btn-verify-chain" type="button">Verify now</button>
+                        </div>
                         <div id="audit-chain-status-ext" class="chain-status-ext"></div>
-                        <button class="btn btn-sm btn-ghost" id="btn-verify-chain" type="button">Verify now</button>
                     </div>
                 </div>
 
@@ -814,6 +852,35 @@
                     </button>
                 </div>
 
+                <div class="users-filters" role="search" aria-label="Search and filter users">
+                    <div class="users-filter-field users-filter-search">
+                        <label for="admin-users-search">Search users</label>
+                        <div class="search-box">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="search" id="admin-users-search" name="search" placeholder="Name or email" autocomplete="off" maxlength="100" aria-describedby="admin-users-result-count">
+                        </div>
+                    </div>
+                    <div class="users-filter-field">
+                        <label for="admin-users-role-filter">Role</label>
+                        <select id="admin-users-role-filter" name="role">
+                            <option value="">All roles</option>
+                            <option value="admin">Admin</option>
+                            <option value="document_owner">Document Owner</option>
+                            <option value="viewer">Viewer</option>
+                        </select>
+                    </div>
+                    <div class="users-filter-field">
+                        <label for="admin-users-status-filter">Account status</label>
+                        <select id="admin-users-status-filter" name="status">
+                            <option value="">All statuses</option>
+                            <option value="active">Active</option>
+                            <option value="disabled">Disabled</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-ghost btn-sm users-clear-filters" id="admin-users-clear-filters" type="button">Clear filters</button>
+                </div>
+                <p id="admin-users-result-count" class="users-result-count" role="status" aria-live="polite">Loading users…</p>
+
                 <div class="table-container">
                     <table class="data-table" id="admin-users-table">
                         <thead>
@@ -831,6 +898,24 @@
                     </table>
                 </div>
                 <div class="pagination" id="admin-users-pagination"></div>
+            </section>
+
+            <section id="view-admin-requests" class="view" aria-labelledby="admin-requests-title">
+                <div class="view-header"><div><h1 id="admin-requests-title">Requests</h1><p class="view-desc">Review and track submitted requests.</p></div>
+                    <button type="button" class="btn btn-ghost" id="admin-requests-retry">Refresh</button></div>
+                <div id="admin-requests-error" class="form-error hidden" role="alert"></div>
+                <div class="requests-count-grid" aria-label="Request counts">
+                    <div class="card request-count-card"><span>Pending</span><strong id="requests-count-pending">Loading…</strong></div>
+                    <div class="card request-count-card"><span>Approved</span><strong id="requests-count-approved">Loading…</strong></div>
+                    <div class="card request-count-card"><span>Rejected</span><strong id="requests-count-rejected">Loading…</strong></div>
+                </div>
+                <div class="users-filters requests-filters" role="search" aria-label="Search and filter requests">
+                    <div class="users-filter-field users-filter-search"><label for="requests-search">Search requester</label><input type="search" id="requests-search" maxlength="100" autocomplete="off" aria-describedby="requests-result-count"></div>
+                    <div class="users-filter-field"><label for="requests-status-filter">Status</label><select id="requests-status-filter"><option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="cancelled">Cancelled</option></select></div>
+                    <div class="users-filter-field"><label for="requests-type-filter">Request type</label><select id="requests-type-filter"><option value="">All types</option><option value="document_owner_upgrade">Document Owner upgrade</option><option value="document_access">Document access</option></select></div>
+                </div>
+                <p id="requests-result-count" class="users-result-count" role="status" aria-live="polite">Loading requests…</p>
+                <div class="table-container"><table class="data-table" id="admin-requests-table"><thead><tr><th>Requester</th><th>Request type</th><th>Requested role/resource</th><th>Submitted</th><th>Status</th><th>Decision details</th><th class="th-actions">Actions</th></tr></thead><tbody id="admin-requests-tbody"><tr><td colspan="7" class="empty-state">Loading requests…</td></tr></tbody></table></div>
             </section>
 
         </main>

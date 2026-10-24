@@ -214,11 +214,243 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             expect(document.getElementById("sidebar-user-email").textContent).toBe(
                 "rathna@example.com"
             );
-            expect(document.getElementById("sidebar-role").textContent).toBe("Role: Admin");
+            expect(document.getElementById("sidebar-user-email").title).toBe(
+                "rathna@example.com"
+            );
+            expect(document.getElementById("sidebar-role-text").textContent).toBe("Admin");
+            expect(document.getElementById("sidebar-role").getAttribute("data-role")).toBe(
+                "admin"
+            );
+            expect(document.getElementById("user-avatar-char").textContent).toBe("R");
+        });
+
+        it("shows the canonical role badge for all three roles", async () => {
+            const expected = {
+                admin: { initial: "R", label: "Admin" },
+                document_owner: { initial: "A", label: "Document Owner" },
+                viewer: { initial: "A", label: "Viewer" }
+            };
+
+            for (const role of ["admin", "document_owner", "viewer"]) {
+                const { window, document } = boot(signedIn(role));
+                await flush(window);
+
+                expect(document.getElementById("user-avatar-char").textContent).toBe(
+                    expected[role].initial
+                );
+                expect(document.getElementById("sidebar-role-text").textContent).toBe(
+                    expected[role].label
+                );
+                expect(document.getElementById("sidebar-role").getAttribute("data-role")).toBe(
+                    role
+                );
+            }
+        });
+
+        it("keeps a long email available in full through the tooltip", async () => {
+            const longEmail =
+                "alexandra.very-long-department-name@international-example-company.test";
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return {
+                        status: 200,
+                        body: {
+                            user: { ...USER.viewer, email: longEmail }
+                        }
+                    };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(handler);
+            await flush(window);
+
+            const email = document.getElementById("sidebar-user-email");
+            expect(email.textContent).toBe(longEmail);
+            expect(email.title).toBe(longEmail);
+        });
+
+        it("opens the existing profile view and signs out through the server", async () => {
+            const { window, document } = boot(signedIn("admin"));
+            await flush(window);
+
+            document.getElementById("btn-account").click();
+            expect(document.getElementById("view-profile").classList.contains("active")).toBe(
+                true
+            );
+            expect(document.getElementById("view-dashboard").classList.contains("active")).toBe(
+                false
+            );
+
+            document.getElementById("logout-btn").click();
+            await flush(window);
+
+            expect(
+                window.API.calls.some(
+                    (call) => call.method === "POST" && call.url === "/api/auth/logout"
+                )
+            ).toBe(true);
+            expect(visible(document.getElementById("auth-screen"))).toBe(true);
+            expect(visible(document.getElementById("app-shell"))).toBe(false);
         });
     });
 
     // ── Escaping ──────────────────────────────────────────────────────────────
+
+    describe("1a. Admin Requests page", () => {
+        const requestRow = {
+            id: "44444444-4444-4444-8444-444444444444",
+            requestType: "document_owner_upgrade",
+            requestedRole: "document_owner",
+            status: "pending",
+            submittedAt: "2026-10-01T00:00:00.000Z",
+            requester: {
+                id: USER.viewer.id,
+                name: "Arjun Rao",
+                email: USER.viewer.email,
+                role: "viewer"
+            }
+        };
+
+        function adminReviewHandler(decisionResponse) {
+            return (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.admin } };
+                }
+                if (url.startsWith("/api/admin/requests?")) {
+                    const status = new URL("https://trustvault.test" + url).searchParams.get("status");
+                    const total = status === "pending" ? 1 : 0;
+                    return { status: 200, body: { requests: status === "all" || status === "pending" ? [{ ...requestRow, requesterId: USER.viewer.id }] : [], total } };
+                }
+                if (method === "POST" && url.includes("/approve")) {
+                    return decisionResponse;
+                }
+                if (url.startsWith("/api/admin/users?")) {
+                    return { status: 200, body: { users: [], total: 0 } };
+                }
+                return { status: 200, body: {} };
+            };
+        }
+
+        async function clickApprove(window, document) {
+            await flush(window);
+            document.getElementById("nav-admin-requests").click();
+            await flush(window);
+            const approve = document.querySelector("#admin-requests-tbody button");
+            if (!approve) throw new Error(JSON.stringify({ tbody: document.getElementById("admin-requests-tbody").textContent, error: document.getElementById("admin-requests-error").textContent, calls: window.API.calls.map((call) => call.url) }));
+            approve.click();
+            await flush(window);
+        }
+
+        it("uses the backend-confirmed role before announcing an approval", async () => {
+            const { window, document } = boot(
+                adminReviewHandler({
+                    status: 200,
+                    body: {
+                        request: { ...requestRow, status: "approved" },
+                        user: { ...USER.viewer, role: "viewer" }
+                    }
+                })
+            );
+            await clickApprove(window, document);
+
+            const toastText = document.getElementById("toast-container").textContent;
+            expect(toastText).toContain("Request approved.");
+            expect(window.API.calls.some((call) => call.url.startsWith("/api/admin/requests/") && call.method === "POST")).toBe(true);
+        });
+
+        it("does not display a decision outcome when the backend operation fails", async () => {
+            const { window, document } = boot(
+                adminReviewHandler({
+                    status: 500,
+                    body: { message: "Decision failed" }
+                })
+            );
+            await clickApprove(window, document);
+
+            const toastText = document.getElementById("toast-container").textContent;
+            expect(toastText).not.toContain("Request approved");
+            expect(document.getElementById("admin-requests-error").textContent).toContain(
+                "Decision failed"
+            );
+        });
+
+        it("does not request Admin request data for a Viewer and blocks navigation", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) return { status: 200, body: { user: USER.viewer } };
+                if (url.startsWith("/api/admin/requests")) throw new Error("Viewer reached Admin API");
+                return { status: 200, body: {} };
+            };
+            const { window, document } = boot(handler);
+            await flush(window);
+            document.getElementById("nav-admin-requests").click();
+            await flush(window);
+            expect(window.API.calls.some((call) => call.url.startsWith("/api/admin/requests"))).toBe(false);
+            expect(document.getElementById("view-admin-requests").classList.contains("active")).toBe(false);
+        });
+    });
+
+    describe("1b. Profile request history", () => {
+        const pendingRequest = {
+            id: "77777777-7777-4777-8777-777777777777",
+            requestType: "document_owner_upgrade",
+            requestedRole: "document_owner",
+            status: "pending",
+            submittedAt: "2026-10-01T00:00:00.000Z",
+            decidedAt: null,
+            reviewerRole: "admin",
+            decisionNote: null,
+            reason: '<img src=x onerror="window.__pwned=1">'
+        };
+
+        it("loads the signed-in user's requests, escapes text, and cancels only pending rows", async () => {
+            let list = [pendingRequest];
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) return { status: 200, body: { user: USER.viewer } };
+                if (url === "/api/requests/mine") return { status: 200, body: { requests: list } };
+                if (method === "POST" && url.endsWith("/cancel")) {
+                    list = [{ ...pendingRequest, status: "cancelled", decidedAt: "2026-10-02T00:00:00.000Z" }];
+                    return { status: 200, body: { request: list[0] } };
+                }
+                return { status: 200, body: {} };
+            };
+            const { window, document } = boot(handler);
+            await flush(window);
+            document.getElementById("btn-account").click();
+            await flush(window);
+            expect(document.getElementById("my-requests-tbody").textContent).toContain("Pending");
+            expect(document.querySelectorAll("#my-requests-tbody img")).toHaveLength(0);
+            expect(window.__pwned).toBeUndefined();
+            expect(document.getElementById("role-request-submit").disabled).toBe(true);
+            expect(document.querySelector("#my-requests-tbody button").textContent).toBe("Cancel");
+            document.querySelector("#my-requests-tbody button").click();
+            await flush(window);
+            expect(document.getElementById("my-requests-tbody").textContent).toContain("Cancelled");
+            expect(window.API.calls.some((call) => call.method === "POST" && call.url === "/api/requests/" + pendingRequest.id + "/cancel")).toBe(true);
+        });
+
+        it("submits an owner request through the authenticated general endpoint", async () => {
+            let submitted = null;
+            const handler = (method, url, body) => {
+                if (url.startsWith("/api/auth/me")) return { status: 200, body: { user: USER.viewer } };
+                if (url === "/api/requests/mine") return { status: 200, body: { requests: submitted ? [submitted] : [] } };
+                if (method === "POST" && url === "/api/requests") {
+                    submitted = { ...pendingRequest, reason: body.reason, status: "pending" };
+                    return { status: 201, body: { request: submitted } };
+                }
+                return { status: 200, body: {} };
+            };
+            const { window, document } = boot(handler);
+            await flush(window);
+            document.getElementById("btn-account").click(); await flush(window);
+            document.getElementById("role-request-justification").value = "Need to manage my documents";
+            document.getElementById("role-request-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+            await flush(window);
+            const call = window.API.calls.find((entry) => entry.method === "POST" && entry.url === "/api/requests");
+            expect(call.body).toEqual({ requestType: "document_owner_upgrade", reason: "Need to manage my documents" });
+            expect(document.getElementById("my-requests-tbody").textContent).toContain("Pending");
+        });
+    });
 
     describe("2. User content is never executed as markup", () => {
         const hostileName = '<img src=x onerror="window.__pwned=1">';
@@ -544,13 +776,13 @@ describe("TrustVault Frontend: DOM behaviour", () => {
     // ── The truthful integrity status ─────────────────────────────────────────
 
     describe("6. The integrity status tells the truth", () => {
-        async function verifyWith(body) {
+        async function verifyWithResponse(verificationResult) {
             const handler = (method, url) => {
                 if (url.startsWith("/api/auth/me")) {
                     return { status: 200, body: { user: USER.admin } };
                 }
                 if (url.startsWith("/api/admin/verify-chain")) {
-                    return { status: 200, body };
+                    return verificationResult;
                 }
                 return { status: 200, body: {} };
             };
@@ -567,6 +799,10 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             return context;
         }
 
+        async function verifyWith(body) {
+            return verifyWithResponse({ status: 200, body });
+        }
+
         it("says VERIFIED when the server reports a valid chain", async () => {
             const { document } = await verifyWith({
                 valid: true,
@@ -579,11 +815,81 @@ describe("TrustVault Frontend: DOM behaviour", () => {
                 "INTEGRITY: VERIFIED"
             );
             expect(document.getElementById("audit-integrity-text").textContent).toContain("452");
+            expect(
+                document.getElementById("audit-chain-status-ext").childElementCount
+            ).toBe(0);
+            expect(
+                document.getElementById("audit-integrity-card").classList.contains("is-valid")
+            ).toBe(true);
+        });
+
+        it("keeps the documented incident and its server-provided segment visible", async () => {
+            const { document } = await verifyWith({
+                valid: false,
+                status: "documented_incident",
+                reason: "documented_historical_incident",
+                brokenAtId: 512,
+                totalEntries: 620,
+                latestEntryId: 620,
+                segment2: {
+                    startId: 513,
+                    endId: 620,
+                    valid: true,
+                    entriesCount: 108
+                },
+                appendHealth: {
+                    active: true,
+                    extendsLatest: true,
+                    latestId: 620
+                },
+                incident: { code: "INC-2026-777", brokenAtId: 512 }
+            });
+
+            const title = document.getElementById("audit-integrity-title");
+            const text = document.getElementById("audit-integrity-text");
+            const details = document.getElementById("audit-chain-status-ext");
+            const card = document.getElementById("audit-integrity-card");
+
+            expect(title.textContent).toBe("INTEGRITY: FAILED");
+            expect(text.textContent).toContain("INC-2026-777");
+            expect(text.textContent).toContain("512");
+            expect(text.textContent).toMatch(/preserved/i);
+            expect(text.textContent).toMatch(/segmented/i);
+            expect(text.textContent).not.toContain("INC-2026-438");
+
+            expect(details.textContent).toContain("Post-incident segment 513 → 620");
+            expect(details.textContent).toContain("108 entries");
+            expect(details.textContent).toContain("Verified intact");
+            expect(details.textContent).toContain("Append health (latest 620)");
+            expect(details.textContent).toContain("Active & continuous");
+            expect(details.textContent).not.toContain("INC-2026-438");
+
+            expect(card.classList.contains("is-invalid")).toBe(true);
+            expect(card.classList.contains("is-incident")).toBe(true);
+            expect(card.classList.contains("is-valid")).toBe(false);
+        });
+
+        it("shows no segment or append row unless the server supplies it", async () => {
+            const { document } = await verifyWith({
+                valid: false,
+                status: "documented_incident",
+                brokenAtId: 438,
+                totalEntries: 452,
+                incident: { code: "INC-2026-438" }
+            });
+
+            expect(document.getElementById("audit-integrity-title").textContent).toBe(
+                "INTEGRITY: FAILED"
+            );
+            expect(
+                document.getElementById("audit-chain-status-ext").childElementCount
+            ).toBe(0);
         });
 
         it("says FAILED and names the broken entry when the chain is broken", async () => {
             const { document } = await verifyWith({
                 valid: false,
+                status: "failed",
                 totalEntries: 452,
                 reason: "broken_link",
                 brokenAtId: 438
@@ -593,6 +899,15 @@ describe("TrustVault Frontend: DOM behaviour", () => {
                 "INTEGRITY: FAILED"
             );
             expect(document.getElementById("audit-integrity-text").textContent).toContain("438");
+            expect(document.getElementById("audit-integrity-text").textContent).toMatch(
+                /server-side investigation/
+            );
+            expect(
+                document.getElementById("audit-chain-status-ext").childElementCount
+            ).toBe(0);
+            expect(
+                document.getElementById("audit-integrity-card").classList.contains("is-incident")
+            ).toBe(false);
         });
 
         it("says NOT VERIFIED when the server reports nothing", async () => {
@@ -604,6 +919,67 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             expect(document.getElementById("audit-integrity-text").textContent).toMatch(
                 /did not report a verification result/
             );
+            expect(
+                document.getElementById("audit-chain-status-ext").childElementCount
+            ).toBe(0);
+        });
+
+        it("never turns an unavailable verifier into success", async () => {
+            const { document } = await verifyWith({
+                valid: false,
+                status: "unavailable",
+                message: "Unable to verify audit chain: database or verifier unavailable"
+            });
+
+            expect(document.getElementById("audit-integrity-title").textContent).toBe(
+                "INTEGRITY: NOT VERIFIED"
+            );
+            expect(document.getElementById("audit-integrity-text").textContent).toBe(
+                "Unable to verify audit chain: database or verifier unavailable"
+            );
+            expect(
+                document.getElementById("audit-integrity-card").classList.contains("is-valid")
+            ).toBe(false);
+        });
+
+        it("treats a 503 verification response as unavailable", async () => {
+            const { document } = await verifyWithResponse({
+                status: 503,
+                body: {
+                    valid: false,
+                    status: "unavailable",
+                    message: "Unable to verify audit chain: database or verifier unavailable"
+                }
+            });
+
+            expect(document.getElementById("audit-integrity-title").textContent).toBe(
+                "INTEGRITY: NOT VERIFIED"
+            );
+            expect(document.getElementById("audit-integrity-text").textContent).toMatch(
+                /Unable to verify audit chain/
+            );
+        });
+
+        it("verifies with a read-only GET and never mutates audit records", async () => {
+            const { window } = await verifyWith({
+                valid: true,
+                totalEntries: 452,
+                reason: "ok"
+            });
+
+            const verificationCalls = window.API.calls.filter((call) =>
+                call.url.startsWith("/api/admin/verify-chain")
+            );
+
+            expect(verificationCalls.length).toBeGreaterThan(0);
+            expect(verificationCalls.every((call) => call.method === "GET")).toBe(true);
+            expect(
+                window.API.calls.some(
+                    (call) =>
+                        call.method !== "GET" &&
+                        /\/api\/admin\/(verify-chain|audit-logs)/.test(call.url)
+                )
+            ).toBe(false);
         });
     });
 
@@ -898,6 +1274,255 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             );
             expect(patch).toBeTruthy();
             expect(patch.body).toEqual({ role: "document_owner" });
+        });
+    });
+
+    // ── Admin users search and filters ─────────────────────────────────────────
+
+    describe("9a. Admin users search, filters and states", () => {
+        function userListCall(window) {
+            return window.API.calls
+                .filter((entry) => entry.url.startsWith("/api/admin/users?"))
+                .slice(-1)[0];
+        }
+
+        function userListParams(window) {
+            const call = userListCall(window);
+            return new URLSearchParams(call.url.split("?")[1]);
+        }
+
+        const ADMIN_FILTER_RESPONSE = {
+            users: [
+                {
+                    id: USER.document_owner.id,
+                    name: "Alice Nair",
+                    email: "alice@example.com",
+                    role: "document_owner",
+                    is_disabled: false,
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    document_count: 2
+                }
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+            page: 1,
+            pageSize: 50,
+            hasMore: false
+        };
+
+        function handlerWithUsers(body) {
+            return (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.admin } };
+                }
+                if (url.startsWith("/api/admin/users?")) {
+                    return { status: 200, body };
+                }
+                return { status: 200, body: {} };
+            };
+        }
+
+        it("debounces typing, trims the search, combines filters and clears them", async () => {
+            const { window, document } = boot(handlerWithUsers(ADMIN_FILTER_RESPONSE));
+            await flush(window);
+
+            document.getElementById("nav-admin-users").click();
+            await flush(window);
+
+            const callsAfterLoad = window.API.calls.filter((entry) =>
+                entry.url.startsWith("/api/admin/users?")
+            ).length;
+            const search = document.getElementById("admin-users-search");
+
+            // Three quick input events must produce one request, after the
+            // debounce delay, with the final trimmed value.
+            search.value = "A";
+            search.dispatchEvent(new window.Event("input", { bubbles: true }));
+            search.value = "Al";
+            search.dispatchEvent(new window.Event("input", { bubbles: true }));
+            search.value = "  Alice  ";
+            search.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+            await new Promise((resolve) => window.setTimeout(resolve, 360));
+            await flush(window);
+
+            const callsAfterSearch = window.API.calls.filter((entry) =>
+                entry.url.startsWith("/api/admin/users?")
+            ).length;
+            expect(callsAfterSearch - callsAfterLoad).toBe(1);
+
+            let params = userListParams(window);
+            expect(params.get("search")).toBe("Alice");
+            expect(params.get("role")).toBeNull();
+            expect(params.get("status")).toBeNull();
+            expect(params.get("offset")).toBe("0");
+            expect(
+                document.getElementById("admin-users-result-count").textContent
+            ).toBe("1 matching user");
+
+            // Changing one filter keeps the others.
+            document.getElementById("admin-users-role-filter").value = "document_owner";
+            document
+                .getElementById("admin-users-role-filter")
+                .dispatchEvent(new window.Event("change", { bubbles: true }));
+            await flush(window);
+
+            document.getElementById("admin-users-status-filter").value = "active";
+            document
+                .getElementById("admin-users-status-filter")
+                .dispatchEvent(new window.Event("change", { bubbles: true }));
+            await flush(window);
+
+            params = userListParams(window);
+            expect(params.get("search")).toBe("Alice");
+            expect(params.get("role")).toBe("document_owner");
+            expect(params.get("status")).toBe("active");
+
+            document.getElementById("admin-users-clear-filters").click();
+            await flush(window);
+
+            params = userListParams(window);
+            expect(params.get("search")).toBeNull();
+            expect(params.get("role")).toBeNull();
+            expect(params.get("status")).toBeNull();
+            expect(document.getElementById("admin-users-search").value).toBe("");
+            expect(document.getElementById("admin-users-role-filter").value).toBe("");
+            expect(document.getElementById("admin-users-status-filter").value).toBe("");
+            expect(
+                document.getElementById("admin-users-result-count").textContent
+            ).toBe("1 user");
+        });
+
+        it("shows a filter-aware empty state and matching count", async () => {
+            const { window, document } = boot(
+                handlerWithUsers({ users: [], total: 0, limit: 50, offset: 0 })
+            );
+            await flush(window);
+
+            document.getElementById("nav-admin-users").click();
+            await flush(window);
+
+            expect(document.getElementById("admin-users-tbody").textContent).toContain(
+                "No users have registered yet."
+            );
+
+            document.getElementById("admin-users-role-filter").value = "admin";
+            document
+                .getElementById("admin-users-role-filter")
+                .dispatchEvent(new window.Event("change", { bubbles: true }));
+            await flush(window);
+
+            expect(document.getElementById("admin-users-tbody").textContent).toContain(
+                "No users match your search and filters"
+            );
+            expect(document.getElementById("admin-users-tbody").textContent).toContain(
+                "clear the filters"
+            );
+            expect(
+                document.getElementById("admin-users-result-count").textContent
+            ).toBe("No matching users");
+            expect(document.getElementById("admin-users-pagination").textContent).toBe("");
+        });
+
+        it("shows an error state without breaking the page", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.admin } };
+                }
+                if (url.startsWith("/api/admin/users?")) {
+                    return {
+                        status: 500,
+                        body: { message: "Unable to retrieve user list" }
+                    };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(handler);
+            await flush(window);
+
+            document.getElementById("nav-admin-users").click();
+            await flush(window);
+
+            expect(document.getElementById("admin-users-tbody").textContent).toContain(
+                "Unable to retrieve user list"
+            );
+            expect(
+                document.getElementById("admin-users-result-count").textContent
+            ).toBe("Unable to load users.");
+        });
+
+        it("keeps the active filters after disabling the targeted user", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.admin } };
+                }
+                if (url.startsWith("/api/admin/users?")) {
+                    const body = {
+                        users: [
+                            {
+                                id: USER.viewer.id,
+                                name: "John Doe",
+                                email: "john@example.com",
+                                role: "viewer",
+                                is_disabled: false
+                            }
+                        ],
+                        total: 1
+                    };
+                    return { status: 200, body };
+                }
+                if (method === "PATCH" && url.includes("/disable")) {
+                    return { status: 200, body: { message: "Account disabled" } };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(handler);
+            await flush(window);
+
+            document.getElementById("nav-admin-users").click();
+            await flush(window);
+
+            const search = document.getElementById("admin-users-search");
+            search.value = "John";
+            search.dispatchEvent(
+                new window.KeyboardEvent("keydown", {
+                    key: "Enter",
+                    bubbles: true,
+                    cancelable: true
+                })
+            );
+            document.getElementById("admin-users-role-filter").value = "viewer";
+            document
+                .getElementById("admin-users-role-filter")
+                .dispatchEvent(new window.Event("change", { bubbles: true }));
+            document.getElementById("admin-users-status-filter").value = "active";
+            document
+                .getElementById("admin-users-status-filter")
+                .dispatchEvent(new window.Event("change", { bubbles: true }));
+            await flush(window);
+
+            const disableButton = Array.from(
+                document.getElementById("admin-users-tbody").querySelectorAll("button")
+            ).find((button) => button.textContent === "Disable");
+            expect(disableButton).toBeTruthy();
+
+            disableButton.click();
+            await flush(window);
+            document.getElementById("confirm-ok").click();
+            await flush(window);
+
+            const patch = window.API.calls.find(
+                (entry) => entry.method === "PATCH" && entry.url.includes("/disable")
+            );
+            expect(patch.url).toBe(`/api/admin/users/${USER.viewer.id}/disable`);
+
+            const params = userListParams(window);
+            expect(params.get("search")).toBe("John");
+            expect(params.get("role")).toBe("viewer");
+            expect(params.get("status")).toBe("active");
         });
     });
 

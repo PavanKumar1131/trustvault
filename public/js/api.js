@@ -41,6 +41,10 @@
             headers
         };
 
+        if (!fetchOpts.signal && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+            fetchOpts.signal = AbortSignal.timeout(10000);
+        }
+
         const res = await fetch(url, fetchOpts);
 
         // If we get a 403 that looks like a CSRF rejection, refresh the token
@@ -53,7 +57,11 @@
                     await refreshCsrfToken();
                     if (csrfToken) {
                         headers["x-csrf-token"] = csrfToken;
-                        const retry = await fetch(url, { ...fetchOpts, headers });
+                        const retryOpts = { ...fetchOpts, headers };
+                        if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+                            retryOpts.signal = AbortSignal.timeout(10000);
+                        }
+                        const retry = await fetch(url, retryOpts);
                         return retry;
                     }
                 }

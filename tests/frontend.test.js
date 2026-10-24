@@ -128,6 +128,20 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
             expect(indexHtml).toContain("auth-panel-form");
         });
 
+        it("puts the sign-in and create-account forms in the same split layout", () => {
+            const layoutStart = indexHtml.indexOf('class="auth-layout"');
+            const formPanel = indexHtml.indexOf('class="auth-panel-form"');
+            const loginForm = indexHtml.indexOf('id="login-form"');
+            const registerForm = indexHtml.indexOf('id="register-form"');
+            const appShell = indexHtml.indexOf('id="app-shell"');
+
+            expect(layoutStart).toBeGreaterThan(-1);
+            expect(formPanel).toBeGreaterThan(layoutStart);
+            expect(loginForm).toBeGreaterThan(formPanel);
+            expect(registerForm).toBeGreaterThan(loginForm);
+            expect(registerForm).toBeLessThan(appShell);
+        });
+
         it("offers no role choice anywhere in the public registration form", () => {
             expect(indexHtml).not.toContain('id="register-role"');
 
@@ -172,7 +186,8 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
                     "upload",
                     "search",
                     "admin-audit",
-                    "admin-users"
+                    "admin-users",
+                    "admin-requests"
                 ].sort()
             );
         });
@@ -183,6 +198,7 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
             expect(navMatrix.search).toEqual(["admin", "document_owner", "viewer"]);
             expect(navMatrix["admin-audit"]).toEqual(["admin"]);
             expect(navMatrix["admin-users"]).toEqual(["admin"]);
+            expect(navMatrix["admin-requests"]).toEqual(["admin"]);
             expect(navMatrix.upload).toEqual(["document_owner"]);
             expect(navMatrix.upload).not.toContain("admin");
             expect(navMatrix.documents).not.toContain("admin");
@@ -214,9 +230,22 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
 
         it("puts the signed-in identity and the role in the sidebar footer", () => {
             expect(indexHtml).toContain("Signed in as");
+            expect(indexHtml).toContain('id="user-avatar-char"');
             expect(indexHtml).toContain('id="sidebar-user-email"');
             expect(indexHtml).toContain('id="sidebar-role"');
-            expect(appJs).toContain('"Role: "');
+            expect(indexHtml).toContain('id="sidebar-role-text"');
+            expect(appJs).toContain('setAttribute("data-role", role)');
+        });
+
+        it("gives the sidebar account block visible Profile and Sign out actions", () => {
+            expect(indexHtml).toMatch(
+                /id="btn-account"[\s\S]*?<span>Profile<\/span>/
+            );
+            expect(indexHtml).toMatch(
+                /id="logout-btn"[\s\S]*?<span>Sign out<\/span>/
+            );
+            expect(appJs).toContain('el("btn-account").addEventListener("click"');
+            expect(appJs).toContain('el("logout-btn").addEventListener("click", signOut)');
         });
 
         it("hides every navigation item until the role is known", () => {
@@ -257,6 +286,7 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
             "view-profile",
             "view-admin-audit",
             "view-admin-users",
+            "view-admin-requests",
             "tab-details",
             "tab-access",
             "tab-activity",
@@ -292,7 +322,28 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
             "audit-user-filter",
             "audit-outcome-filter",
             "audit-from-filter",
-            "audit-to-filter"
+            "audit-to-filter",
+            "admin-users-search",
+            "admin-users-role-filter",
+            "admin-users-status-filter",
+            "admin-users-clear-filters",
+            "admin-users-result-count",
+            "my-requests",
+            "my-requests-tbody",
+            "my-requests-retry",
+            "role-request-form",
+            "role-request-justification",
+            "role-request-submit",
+            "requests-count-pending",
+            "requests-count-approved",
+            "requests-count-rejected",
+            "admin-requests-tbody",
+            "user-avatar-char",
+            "sidebar-role-text",
+            "btn-account",
+            "logout-btn",
+            "btn-verify-chain",
+            "audit-chain-status-ext"
         ];
 
         requiredIds.forEach((id) => {
@@ -309,11 +360,44 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
 
         it("labels every interactive control that has no visible label", () => {
             // Icon-only buttons carry an accessible name.
-            const iconButtons = indexHtml.match(/<button[^>]*class="btn-icon"[^>]*>/g) || [];
+            const iconButtons =
+                indexHtml.match(/<button[^>]*class="btn-icon[^"]*"[^>]*>/g) || [];
             expect(iconButtons.length).toBeGreaterThan(0);
             iconButtons.forEach((tag) => {
                 expect(tag).toMatch(/aria-label=/);
             });
+        });
+
+        it("labels the admin user search and filters visibly", () => {
+            expect(indexHtml).toMatch(
+                /<label for="admin-users-search">Search users<\/label>/
+            );
+            expect(indexHtml).toMatch(
+                /<label for="admin-users-role-filter">Role<\/label>/
+            );
+            expect(indexHtml).toMatch(
+                /<label for="admin-users-status-filter">Account status<\/label>/
+            );
+            expect(indexHtml).toContain('id="admin-users-clear-filters"');
+            expect(indexHtml).toContain('id="admin-users-result-count"');
+        });
+
+        it("uses the canonical role and status values in the admin filters", () => {
+            expect(indexHtml).toMatch(
+                /id="admin-users-role-filter"[\s\S]*?<option value="admin">/
+            );
+            expect(indexHtml).toMatch(
+                /id="admin-users-role-filter"[\s\S]*?<option value="document_owner">/
+            );
+            expect(indexHtml).toMatch(
+                /id="admin-users-role-filter"[\s\S]*?<option value="viewer">/
+            );
+            expect(indexHtml).toMatch(
+                /id="admin-users-status-filter"[\s\S]*?<option value="active">/
+            );
+            expect(indexHtml).toMatch(
+                /id="admin-users-status-filter"[\s\S]*?<option value="disabled">/
+            );
         });
 
         it("gives every filter the wording of the approved design", () => {
@@ -390,6 +474,7 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
         });
 
         it("defines breakpoints for desktop, tablet and mobile", () => {
+            expect(stylesCss).toContain("@media (max-width: 1180px)");
             expect(stylesCss).toContain("@media (max-width: 1024px)");
             expect(stylesCss).toContain("@media (max-width: 900px)");
             expect(stylesCss).toContain("@media (max-width: 768px)");
@@ -397,16 +482,66 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
             expect(stylesCss).toContain("@media (max-width: 480px)");
         });
 
-        it("collapses the auth split panel on a small screen", () => {
-            expect(mediaBlock("@media (max-width: 900px)")).toMatch(
+        it("uses the requested 60:40 desktop split for sign in and sign up", () => {
+            const layout = /\.auth-layout\s*\{[^}]*grid-template-columns:\s*60%\s+40%/;
+            expect(stylesCss).toMatch(layout);
+        });
+
+        it("keeps the authentication form at a readable width in the 40% panel", () => {
+            expect(stylesCss).toMatch(
+                /\.auth-form-container\s*\{[^}]*max-width:\s*420px/
+            );
+            expect(stylesCss).toMatch(
+                /\.auth-panel-form\s*\{[^}]*padding:\s*clamp\(24px,\s*3vw,\s*48px\)/
+            );
+        });
+
+        it("collapses the auth split panel before the form becomes too narrow", () => {
+            expect(mediaBlock("@media (max-width: 1180px)")).toMatch(
                 /\.auth-layout\s*\{[^}]*grid-template-columns:\s*1fr/
             );
+        });
+
+        it("keeps the sidebar account block inside its width for long emails", () => {
+            expect(stylesCss).toMatch(
+                /\.user-email\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;/
+            );
+            expect(stylesCss).toMatch(
+                /\.sidebar-actions\s*\{[^}]*grid-template-columns:\s*1fr\s+1fr;/
+            );
+            expect(mediaBlock("@media (max-width: 768px)")).toMatch(
+                /\.sidebar-action\s+span\s*\{\s*display:\s*none;/
+            );
+        });
+    });
+
+    // ── 7. Compact, truthful audit summary ──────────────────────────────────────
+
+    describe("7. Compact and truthful audit summary", () => {
+        it("keeps the warning compact with a secondary outlined Verify now action", () => {
+            expect(indexHtml).toMatch(
+                /id="audit-integrity-card"[^>]*role="status"/
+            );
+            expect(indexHtml).toContain("integrity-head");
+            expect(indexHtml).toContain("integrity-action");
+            expect(stylesCss).toMatch(
+                /\.audit-banner-card\.integrity\s*\{[^}]*padding:\s*14px 16px;/
+            );
+            expect(stylesCss).toMatch(
+                /\.integrity-action\s*\{[^}]*background:\s*#ffffff;/
+            );
+        });
+
+        it("never hardcodes the historical incident or a successful status", () => {
+            const code = stripComments(appJs);
+            expect(code).not.toContain("INC-2026-438");
+            expect(code).not.toMatch(/brokenAtId\s*\?\?\s*438/);
         });
     });
 
     // ── 7. Safety ─────────────────────────────────────────────────────────────
 
-    describe("7. Safety of the browser code", () => {
+    describe("8. Safety of the browser code", () => {
         it("never writes user content as HTML", () => {
             const code = stripComments(appJs);
 
@@ -442,7 +577,7 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
 
     // ── 8. Exact wording from the PDFs ────────────────────────────────────────
 
-    describe("8. The wording the PDFs fix verbatim", () => {
+    describe("9. The wording the PDFs fix verbatim", () => {
         it("states that a delete is permanent and that audit records are kept", () => {
             expect(appJs).toContain(
                 "will be permanently deleted and access for everyone it was shared with ends."
@@ -582,7 +717,7 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
 
     // ── 9. The API the frontend talks to ──────────────────────────────────────
 
-    describe("9. The API surface the frontend depends on", () => {
+    describe("10. The API surface the frontend depends on", () => {
         it("reads the counters of the owner dashboard from /api/documents/summary", () => {
             expect(appJs).toContain('api("GET", "/api/documents/summary")');
         });
@@ -626,6 +761,39 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
             // No literal dashboard numbers may be hard-coded.
             expect(appJs).not.toMatch(/stat-value[^]*=\s*"\d+"/);
             expect(appJs).toContain("?? 0");
+        });
+    });
+
+    // ── 11. Role upgrade request UI ───────────────────────────────────────────
+
+    describe("11. The Requests UI", () => {
+        it("puts My Requests and Owner access submission on Profile", () => {
+            const profile = /<section id="view-profile"[\s\S]*?<\/section>/.exec(indexHtml);
+            expect(profile).toBeTruthy();
+            expect(profile[0]).toContain('id="my-requests"');
+            expect(profile[0]).toContain('id="role-request-submit"');
+            expect(indexHtml).toContain('id="my-requests-retry"');
+            expect(indexHtml).toMatch(/id="role-request-justification"[^>]*maxlength="500"/);
+        });
+
+        it("uses authenticated general request endpoints", () => {
+            expect(appJs).toContain('api("GET", "/api/requests/mine")');
+            expect(appJs).toContain('api("POST", "/api/requests"');
+            expect(appJs).toContain('requestType: "document_owner_upgrade"');
+            expect(appJs).toContain('"/api/requests/" + encodeURIComponent(request.id) + "/cancel"');
+        });
+
+        it("has a separate Admin Requests view and uses the general admin endpoints", () => {
+            expect(navMatrix["admin-requests"]).toEqual(["admin"]);
+            expect(indexHtml).toContain('id="nav-admin-requests-count"');
+            expect(indexHtml).toContain('id="view-admin-requests"');
+            expect(appJs).toContain('"/api/admin/requests?" + params.toString()');
+            expect(appJs).toContain('"/api/admin/requests/" + encodeURIComponent(request.id) + "/" + action');
+        });
+
+        it("renders request-supplied content using text nodes", () => {
+            expect(appJs).toContain("cell.textContent = content === null");
+            expect(appJs).not.toMatch(/innerHTML\s*=/);
         });
     });
 });

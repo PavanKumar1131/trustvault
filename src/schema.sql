@@ -76,6 +76,53 @@ CREATE TABLE IF NOT EXISTS document_permissions (
 CREATE INDEX IF NOT EXISTS document_permissions_user_id_idx ON document_permissions(user_id);
 CREATE INDEX IF NOT EXISTS document_permissions_document_id_idx ON document_permissions(document_id);
 
+-- ── Requests ─────────────────────────────────────────────────────────────────
+-- The registry in src/services/requestPolicyRegistry.js controls which
+-- request types are enabled and how each may be reviewed. Only
+-- document_owner_upgrade is executable in this release.
+CREATE TABLE IF NOT EXISTS requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    request_type VARCHAR(50) NOT NULL
+        CHECK (request_type IN ('document_owner_upgrade', 'document_access')),
+    requested_role VARCHAR(30),
+    target_resource_id UUID,
+    requested_permission VARCHAR(20),
+    reason TEXT CHECK (reason IS NULL OR char_length(reason) <= 500),
+    decision_note TEXT CHECK (decision_note IS NULL OR char_length(decision_note) <= 500),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+    reviewer_role VARCHAR(30) NOT NULL,
+    reviewer_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_at TIMESTAMPTZ,
+    CONSTRAINT requests_type_fields_check CHECK (
+        (request_type = 'document_owner_upgrade'
+            AND requested_role = 'document_owner'
+            AND target_resource_id IS NULL
+            AND requested_permission IS NULL)
+        OR
+        (request_type = 'document_access'
+            AND requested_role IS NULL
+            AND target_resource_id IS NOT NULL
+            AND target_resource_id <> '00000000-0000-0000-0000-000000000000'::uuid
+            AND requested_permission IN ('read', 'edit'))
+    )
+);
+
+CREATE INDEX IF NOT EXISTS requests_requester_id_idx ON requests(requester_id);
+CREATE INDEX IF NOT EXISTS requests_status_idx ON requests(status);
+CREATE INDEX IF NOT EXISTS requests_type_idx ON requests(request_type);
+CREATE INDEX IF NOT EXISTS requests_submitted_at_idx ON requests(submitted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS requests_one_pending_per_target_idx
+    ON requests (
+        requester_id,
+        request_type,
+        COALESCE(target_resource_id, '00000000-0000-0000-0000-000000000000'::uuid)
+    )
+    WHERE status = 'pending';
+
 -- ── Append-only security audit trail ──────────────────────────────────────────
 -- Every entry stores the SHA-256 hash of its own canonical representation,
 -- chained to its predecessor through `prev_hash`. Modifying or removing a

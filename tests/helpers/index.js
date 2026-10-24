@@ -50,6 +50,7 @@ async function resetDatabase() {
             document_permissions,
             documents,
             document_blobs,
+            requests,
             user_sessions,
             users
         RESTART IDENTITY CASCADE

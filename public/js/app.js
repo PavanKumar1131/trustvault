@@ -16,7 +16,7 @@
 
     const ROLE_LABELS = {
         admin: "Admin",
-        document_owner: "Owner",
+        document_owner: "Document Owner",
         viewer: "Viewer"
     };
 
@@ -892,14 +892,26 @@
         setHidden(el("nav-section-admin"), role !== "admin");
 
         const emailNode = el("sidebar-user-email");
-        if (emailNode) emailNode.textContent = state.user.email;
+        if (emailNode) {
+            emailNode.textContent = state.user.email;
+            // The address may be visually truncated in the sidebar; the
+            // native tooltip keeps the complete value available.
+            emailNode.title = state.user.email;
+        }
 
+        const roleText = el("sidebar-role-text");
+        if (roleText) roleText.textContent = label;
         const roleNode = el("sidebar-role");
-        if (roleNode) roleNode.textContent = "Role: " + label;
+        if (roleNode) {
+            roleNode.setAttribute("data-role", role);
+            roleNode.title = label + " role";
+        }
 
         const avatar = el("user-avatar-char");
         if (avatar) {
-            avatar.textContent = (state.user.name || state.user.email || "?").charAt(0).toUpperCase();
+            const identity = (state.user.name || state.user.email || "?").trim();
+            avatar.textContent = (identity.charAt(0) || "?").toUpperCase();
+            avatar.title = state.user.name || state.user.email || "";
         }
 
         applyRoleCopy();
@@ -1921,23 +1933,234 @@
 
     const USERS_PAGE_SIZE = 50;
 
+    // Only the newest user-list request may render. A debounced search and a
+    // quickly changed filter can otherwise finish out of order.
+    let usersRequestSerial = 0;
+
+    function currentUserFilters() {
+        const searchNode = el("admin-users-search");
+        const roleNode = el("admin-users-role-filter");
+        const statusNode = el("admin-users-status-filter");
+
+        return {
+            search: searchNode ? searchNode.value.trim() : "",
+            role: roleNode ? roleNode.value : "",
+            status: statusNode ? statusNode.value : ""
+        };
+    }
+
+    function hasUserFilters(filters) {
+        return Boolean(filters.search || filters.role || filters.status);
+    }
+
+    function setUsersTableBusy(busy) {
+        const table = el("admin-users-table");
+        if (!table) return;
+        if (busy) {
+            table.setAttribute("aria-busy", "true");
+        } else {
+            table.removeAttribute("aria-busy");
+        }
+    }
+
+    function setUsersResultCount(message) {
+        const node = el("admin-users-result-count");
+        if (node) node.textContent = message;
+    }
+
+    /**
+     * Shows how many users the current query matched. The number is always
+     * the API's `total` for the active filters, never a client-side estimate.
+     */
+    function renderUsersResultCount(total, shown, filters) {
+        if (!hasUserFilters(filters)) {
+            setUsersResultCount(total === 1 ? "1 user" : total + " users");
+            return;
+        }
+
+        if (total === 0) {
+            setUsersResultCount("No matching users");
+            return;
+        }
+
+        const word = total === 1 ? "user" : "users";
+        if (state.usersOffset > 0 || shown < total) {
+            setUsersResultCount(
+                "Showing " +
+                (state.usersOffset + 1) +
+                "–" +
+                (state.usersOffset + shown) +
+                " of " +
+                total +
+                " matching " +
+                word
+            );
+            return;
+        }
+
+        setUsersResultCount(total + " matching " + word);
+    }
+
+    // ── Admin: unified Requests page ───────────────────────────────────────────
+    let adminRequestsSerial = 0;
+    let adminRequestFiltersTimer = null;
+
+    function requestStatusLabel(status) {
+        return ({ pending: "Pending", approved: "Approved", rejected: "Rejected", cancelled: "Cancelled" })[status] || status || "Unknown";
+    }
+
+    function renderAdminRequestRows(requests) {
+        const tbody = el("admin-requests-tbody");
+        clear(tbody);
+        if (!requests.length) {
+            emptyRow(tbody, "No requests match these filters.", 7);
+            return;
+        }
+        requests.forEach((request) => {
+            const tr = document.createElement("tr");
+            const requester = request.requester || {};
+            const identity = [requester.name || requester.email || "—", requester.email && requester.name ? requester.email : ""].filter(Boolean).join(" · ");
+            tr.appendChild(makeCell(identity));
+            tr.appendChild(makeCell(request.requestType === "document_owner_upgrade" ? "Document Owner upgrade" : request.requestType || "—"));
+            tr.appendChild(makeCell(request.requestedRole ? roleLabel(request.requestedRole) : [request.targetResourceId, request.requestedPermission].filter(Boolean).join(" · ") || "—"));
+            tr.appendChild(makeCell(formatTime(request.submittedAt)));
+            const status = makeBadge(requestStatusLabel(request.status), "badge-status badge-" + (request.status || "pending"));
+            const statusCell = document.createElement("td"); statusCell.appendChild(status); tr.appendChild(statusCell);
+            const details = [request.reason ? "Reason: " + request.reason : "", request.decisionNote ? "Note: " + request.decisionNote : "", request.decidedAt ? "Decided " + formatTime(request.decidedAt) : "", request.decidedBy && (request.decidedBy.name || request.decidedBy.email) ? "by " + (request.decidedBy.name || request.decidedBy.email) : request.reviewerRole ? "Reviewer: " + roleLabel(request.reviewerRole) : ""].filter(Boolean).join(" · ");
+            tr.appendChild(makeCell(details || "—", "request-decision-details"));
+            const actions = document.createElement("td"); actions.className = "td-actions";
+            if (request.status === "pending" && request.requesterId !== state.user.id && request.requestType === "document_owner_upgrade") {
+                const approve = actionButton("Approve", "btn-action", (event) => decideAdminRequest(request, "approve", "", event.currentTarget));
+                approve.setAttribute("aria-label", "Approve request from " + (requester.name || requester.email || "requester"));
+                const reject = actionButton("Reject", "btn-action danger", () => showRejectEditor(actions, request));
+                reject.setAttribute("aria-label", "Reject request from " + (requester.name || requester.email || "requester"));
+                actions.append(approve, reject);
+            } else if (request.status === "pending") {
+                actions.textContent = request.requesterId === state.user.id ? "Self-review is not allowed" : "No enabled review action";
+            } else actions.textContent = "—";
+            tr.appendChild(actions);
+            tbody.appendChild(tr);
+        });
+    }
+
+    function showRejectEditor(container, request) {
+        clear(container);
+        const form = document.createElement("form"); form.className = "request-reject-form";
+        const label = document.createElement("label"); label.textContent = "Rejection note (optional)";
+        const input = document.createElement("textarea"); input.id = "request-rejection-note-" + request.id; label.htmlFor = input.id; input.maxLength = 500; input.rows = 2;
+        const confirm = document.createElement("button"); confirm.type = "submit"; confirm.className = "btn-action danger"; confirm.textContent = "Confirm reject";
+        const cancel = actionButton("Cancel", "btn-action", () => { container.textContent = ""; });
+        form.append(label, input, confirm, cancel); container.appendChild(form);
+        form.addEventListener("submit", (event) => { event.preventDefault(); decideAdminRequest(request, "reject", input.value.trim(), confirm); });
+        input.focus();
+    }
+
+    async function decideAdminRequest(request, action, decisionNote, button) {
+        await withBusy(button, async () => {
+            try {
+                const result = await api("POST", "/api/admin/requests/" + encodeURIComponent(request.id) + "/" + action, action === "reject" ? { decisionNote } : {});
+                const expected = action === "approve" ? "approved" : "rejected";
+                if (!result || !result.request || result.request.status !== expected) throw new Error("The server did not confirm the decision. Refresh to check the request status.");
+                toast("Request " + expected + ".", "success");
+                await loaders["admin-requests"]();
+            } catch (error) {
+                setMessage(el("admin-requests-error"), error.message || "The request was not changed.", true);
+            }
+        });
+    }
+
+    async function loadAdminRequestCounts() {
+        const statuses = ["pending", "approved", "rejected"];
+        statuses.forEach((status) => { el("requests-count-" + status).textContent = "Loading…"; });
+        try {
+            const values = await Promise.all(statuses.map((status) => api("GET", "/api/admin/requests?status=" + status + "&limit=1")));
+            statuses.forEach((status, index) => {
+                if (!Number.isFinite(Number(values[index].total))) throw new Error("Invalid request count response");
+                el("requests-count-" + status).textContent = String(Number(values[index].total));
+            });
+            const pending = Number(values[0].total);
+            const badge = el("nav-admin-requests-count");
+            badge.textContent = pending > 99 ? "99+" : String(pending);
+            badge.setAttribute("aria-label", pending + " pending requests");
+            setHidden(badge, pending === 0);
+        } catch (error) {
+            ["pending", "approved", "rejected"].forEach((status) => { el("requests-count-" + status).textContent = "Unavailable"; });
+            const badge = el("nav-admin-requests-count"); badge.textContent = "!"; badge.setAttribute("aria-label", "Pending request count unavailable"); setHidden(badge, false);
+            throw error;
+        }
+    }
+
+    loaders["admin-requests"] = async function loadAdminRequests() {
+        if (!state.user || state.user.role !== "admin") return;
+        const serial = ++adminRequestsSerial;
+        setMessage(el("admin-requests-error"), null);
+        loadingRow(el("admin-requests-tbody"), "Loading requests…", 7);
+        el("requests-result-count").textContent = "Loading requests…";
+        try {
+            const params = new URLSearchParams({ status: el("requests-status-filter").value, limit: "100" });
+            const type = el("requests-type-filter").value; const search = el("requests-search").value.trim();
+            if (type) params.set("type", type); if (search) params.set("search", search);
+            const [list] = await Promise.all([api("GET", "/api/admin/requests?" + params.toString()), loadAdminRequestCounts()]);
+            if (serial !== adminRequestsSerial) return;
+            if (!Array.isArray(list.requests) || !Number.isFinite(Number(list.total))) throw new Error("The server returned an invalid request list.");
+            renderAdminRequestRows(list.requests);
+            el("requests-result-count").textContent = list.total + (Number(list.total) === 1 ? " request" : " requests");
+        } catch (error) {
+            if (serial !== adminRequestsSerial) return;
+            emptyRow(el("admin-requests-tbody"), "Requests could not be loaded.", 7);
+            el("requests-result-count").textContent = "Request list unavailable";
+            setMessage(el("admin-requests-error"), error.message || "Unable to load requests. Use Refresh to retry.", true);
+        }
+    };
+
     loaders["admin-users"] = function loadAdminUsers() {
         const tbody = el("admin-users-tbody");
+        const filters = currentUserFilters();
+        const filtered = hasUserFilters(filters);
+        const requestId = ++usersRequestSerial;
+
+        setUsersTableBusy(true);
         loadingRow(tbody, "Loading users…", 5);
+        setUsersResultCount("Loading users…");
 
         const params = new URLSearchParams();
         params.set("limit", String(USERS_PAGE_SIZE));
         params.set("offset", String(state.usersOffset));
+        if (filters.search) params.set("search", filters.search);
+        if (filters.role) params.set("role", filters.role);
+        if (filters.status) params.set("status", filters.status);
 
         api("GET", "/api/admin/users?" + params.toString())
             .then((data) => {
+                if (requestId !== usersRequestSerial) return;
+
                 const users = data.users || [];
                 const total = Number(data.total) || 0;
+
+                // A filter change or an action can make the current page too
+                // high. Move to the last page that still has results.
+                if (users.length === 0 && total > 0 && state.usersOffset > 0) {
+                    state.usersOffset =
+                        Math.floor((total - 1) / USERS_PAGE_SIZE) * USERS_PAGE_SIZE;
+                    loaders["admin-users"]();
+                    return;
+                }
+
                 clear(tbody);
 
                 if (users.length === 0) {
-                    emptyRow(tbody, "No users have registered yet.", 5);
+                    if (filtered) {
+                        emptyState(
+                            tbody,
+                            "No users match your search and filters",
+                            "Try a different name, email, role or status, or clear the filters.",
+                            5
+                        );
+                    } else {
+                        emptyRow(tbody, "No users have registered yet.", 5);
+                    }
                     clear(el("admin-users-pagination"));
+                    renderUsersResultCount(total, 0, filters);
                     return;
                 }
 
@@ -1994,21 +2217,29 @@
                     tbody.appendChild(tr);
                 });
 
-                renderUsersPagination(total, users.length);
+                renderUsersPagination(total, users.length, filtered);
+                renderUsersResultCount(total, users.length, filters);
             })
             .catch((error) => {
-                emptyRow(tbody, error.message || "Unable to load users.", 5);
+                if (requestId !== usersRequestSerial) return;
+                const message = error.message || "Unable to load users.";
+                emptyRow(tbody, message, 5);
                 clear(el("admin-users-pagination"));
+                setUsersResultCount("Unable to load users.");
+            })
+            .finally(() => {
+                if (requestId === usersRequestSerial) setUsersTableBusy(false);
             });
     };
 
     /**
      * Renders the user list pagination.
      *
-     * The counters come from the API (`total`) and from the number of rows
-     * that were actually returned, never from an estimate.
+     * The counters come from the API (`total`, the number of matching users)
+     * and from the number of rows that were actually returned, never from an
+     * estimate.
      */
-    function renderUsersPagination(total, shown) {
+    function renderUsersPagination(total, shown, filtered) {
         const container = el("admin-users-pagination");
         if (!container) return;
         clear(container);
@@ -2020,7 +2251,9 @@
 
         const info = document.createElement("span");
         info.textContent =
-            "Page " + page + " of " + pages + " · " + total + " user" + (total === 1 ? "" : "s");
+            "Page " + page + " of " + pages + " · " + total +
+            (filtered ? " matching " : " ") +
+            "user" + (total === 1 ? "" : "s");
         container.appendChild(info);
 
         if (state.usersOffset > 0) {
@@ -2245,120 +2478,197 @@
     }
 
     /**
-     * Renders the audit chain verification result truthfully.
+     * Turns the server's verification result into the one status the UI shows.
      *
      * The backend decides: `valid: true` → Verified, `valid: false` → Failed,
-     * no answer at all → Not Verified.
+     * no answer or `status: "unavailable"` → Not Verified. No state is ever
+     * inferred from the presence of a historical incident alone.
+     */
+    function describeChainStatus(verification) {
+        if (!verification || typeof verification.valid !== "boolean") {
+            return {
+                state: "unknown",
+                title: "INTEGRITY: NOT VERIFIED",
+                detail: "The server did not report a verification result."
+            };
+        }
+
+        if (verification.status === "unavailable") {
+            return {
+                state: "unknown",
+                title: "INTEGRITY: NOT VERIFIED",
+                detail:
+                    verification.message ||
+                    "Verification service unavailable: database or verifier could not be reached."
+            };
+        }
+
+        if (verification.valid === true) {
+            return {
+                state: "valid",
+                title: "INTEGRITY: VERIFIED",
+                detail:
+                    "All " +
+                    (verification.totalEntries ?? 0) +
+                    " entries hash-chain correctly. No entry has been altered or removed."
+            };
+        }
+
+        if (verification.status === "documented_incident") {
+            const incident = verification.incident || {};
+            const code = typeof incident.code === "string" ? incident.code : "";
+            const brokenAt =
+                verification.brokenAtId ?? incident.brokenAtId ?? null;
+            const codePrefix = code ? code + " · " : "";
+            const location =
+                brokenAt !== null
+                    ? "Historical chain break at entry " + brokenAt + ". "
+                    : "Historical chain break. ";
+
+            return {
+                state: "incident",
+                title: "INTEGRITY: FAILED",
+                detail:
+                    codePrefix +
+                    location +
+                    "Historical records are preserved; the chain is segmented and not continuous."
+            };
+        }
+
+        const reason = verification.reason ? " (" + verification.reason + ")" : "";
+        const location =
+            verification.brokenAtId !== null && verification.brokenAtId !== undefined
+                ? " at entry " + verification.brokenAtId
+                : "";
+
+        return {
+            state: "failed",
+            title: "INTEGRITY: FAILED",
+            detail:
+                "The hash chain is broken" +
+                location +
+                reason +
+                ". " +
+                (verification.totalEntries ?? 0) +
+                " entries were checked. No documented incident explains this break; it needs a server-side investigation."
+        };
+    }
+
+    /** Appends one compact, server-driven verification row. */
+    function appendChainDetailRow(container, labelText, badgeText, badgeClass) {
+        const card = document.createElement("div");
+        card.className = "chain-status-card is-compact";
+
+        const row = document.createElement("div");
+        row.className = "chain-status-row";
+
+        const label = document.createElement("span");
+        label.className = "chain-status-label";
+        label.textContent = labelText;
+
+        const badge = document.createElement("span");
+        badge.className = "chain-badge " + badgeClass;
+        badge.textContent = badgeText;
+
+        row.appendChild(label);
+        row.appendChild(badge);
+        card.appendChild(row);
+        container.appendChild(card);
+    }
+
+    /**
+     * Renders the post-incident rows only from fields the server actually
+     * returned. A missing segment or append-health object stays silent.
+     */
+    function renderIncidentDetails(container, verification) {
+        if (!container) return;
+        clear(container);
+
+        if (!verification || verification.status !== "documented_incident") {
+            return;
+        }
+
+        const segment = verification.segment2;
+        if (segment && typeof segment === "object") {
+            const start = segment.startId ?? "—";
+            const end = segment.endId ?? verification.latestEntryId ?? "—";
+            const count = Number.isFinite(Number(segment.entriesCount))
+                ? " (" + Number(segment.entriesCount) + " entries)"
+                : "";
+            const segmentValid = segment.valid === true;
+
+            appendChainDetailRow(
+                container,
+                "Post-incident segment " + start + " → " + end + count,
+                segmentValid ? "✓ Verified intact" : "✕ Not verified",
+                segmentValid ? "badge-success" : "badge-danger"
+            );
+        }
+
+        const health = verification.appendHealth;
+        if (health && typeof health === "object") {
+            const latest = health.latestId ?? verification.latestEntryId;
+            const healthy =
+                health.active === true && health.extendsLatest === true;
+
+            appendChainDetailRow(
+                container,
+                "Append health" + (latest !== undefined && latest !== null ? " (latest " + latest + ")" : ""),
+                healthy ? "✓ Active & continuous" : "✕ Not confirmed",
+                healthy ? "badge-success" : "badge-warning"
+            );
+        }
+    }
+
+    /**
+     * Renders the complete verification result into any status container.
+     * The dashboard card and the audit summary both use this renderer.
      */
     function renderChainStatus(container, verification) {
         if (!container) return;
         clear(container);
 
-        if (!verification || typeof verification.valid !== "boolean") {
-            const line = document.createElement("div");
-            line.className = "chain-status-line is-unknown";
-            line.textContent = "INTEGRITY: NOT VERIFIED";
-            const detail = document.createElement("div");
-            detail.className = "chain-status-detail";
-            detail.textContent = "The server did not report a verification result.";
-            container.appendChild(line);
-            container.appendChild(detail);
-            return;
-        }
-
-        if (verification.status === "unavailable") {
-            const line = document.createElement("div");
-            line.className = "chain-status-line is-unknown";
-            line.textContent = "INTEGRITY: NOT VERIFIED";
-            const detail = document.createElement("div");
-            detail.className = "chain-status-detail";
-            detail.textContent = verification.message || "Verification service unavailable: database or verifier could not be reached.";
-            container.appendChild(line);
-            container.appendChild(detail);
-            return;
-        }
-
+        const summary = describeChainStatus(verification);
         const line = document.createElement("div");
+        line.className =
+            summary.state === "valid"
+                ? "chain-status-line is-valid"
+                : summary.state === "failed" || summary.state === "incident"
+                  ? "chain-status-line is-invalid"
+                  : "chain-status-line is-unknown";
+        line.textContent = summary.title;
+
         const detail = document.createElement("div");
         detail.className = "chain-status-detail";
+        detail.textContent = summary.detail;
 
-        if (verification.valid) {
-            line.className = "chain-status-line is-valid";
-            line.textContent = "INTEGRITY: VERIFIED";
-            detail.textContent =
-                "All " +
-                (verification.totalEntries ?? 0) +
-                " entries hash-chain correctly. No entry has been altered or removed.";
-            container.appendChild(line);
-            container.appendChild(detail);
-        } else if (verification.status === "documented_incident") {
-            line.className = "chain-status-line is-invalid";
-            line.textContent = "INTEGRITY: FAILED";
-            detail.textContent =
-                "The hash chain is broken at entry " +
-                (verification.brokenAtId ?? "438") +
-                " (documented incident " +
-                (verification.incident?.code || "INC-2026-438") +
-                "). Historical records are preserved; the chain is segmented.";
-            container.appendChild(line);
-            container.appendChild(detail);
+        container.appendChild(line);
+        container.appendChild(detail);
+        renderIncidentDetails(container, verification);
+    }
 
-            // Separate truthful states for post-incident segment & append health
-            const ext = document.createElement("div");
-            ext.className = "chain-status-ext";
+    /** Applies the same verification result to the compact audit alert. */
+    function renderAuditBanner(verification) {
+        const title = el("audit-integrity-title");
+        const text = el("audit-integrity-text");
+        const card = el("audit-integrity-card");
+        const summary = describeChainStatus(verification);
 
-            const segCard = document.createElement("div");
-            segCard.className = "chain-status-card";
-            const segHead = document.createElement("div");
-            segHead.className = "chain-status-row";
-            const segLabel = document.createElement("span");
-            segLabel.className = "chain-status-label";
-            segLabel.textContent = "Post-incident segment (438 → " + (verification.latestEntryId || "latest") + ")";
-            const segBadge = document.createElement("span");
-            segBadge.className = "chain-badge badge-success";
-            segBadge.textContent = "✓ Verified intact";
-            segHead.appendChild(segLabel);
-            segHead.appendChild(segBadge);
-            const segDesc = document.createElement("div");
-            segDesc.className = "chain-status-detail";
-            segDesc.textContent = "Cryptographically verified continuous hash chain from entry 438 through entry #" + (verification.latestEntryId || "latest") + ".";
-            segCard.appendChild(segHead);
-            segCard.appendChild(segDesc);
-            ext.appendChild(segCard);
+        if (title) title.textContent = summary.title;
+        if (text) text.textContent = summary.detail;
 
-            const appCard = document.createElement("div");
-            appCard.className = "chain-status-card";
-            const appHead = document.createElement("div");
-            appHead.className = "chain-status-row";
-            const appLabel = document.createElement("span");
-            appLabel.className = "chain-status-label";
-            appLabel.textContent = "New append health";
-            const appBadge = document.createElement("span");
-            appBadge.className = "chain-badge badge-success";
-            appBadge.textContent = "✓ Active & continuous";
-            appHead.appendChild(appLabel);
-            appHead.appendChild(appBadge);
-            const appDesc = document.createElement("div");
-            appDesc.className = "chain-status-detail";
-            appDesc.textContent = "Recent log entries link to the actual preceding chain head under advisory lock. Incident INC-2026-438 remains isolated.";
-            appCard.appendChild(appHead);
-            appCard.appendChild(appDesc);
-            ext.appendChild(appCard);
-
-            container.appendChild(ext);
-        } else {
-            line.className = "chain-status-line is-invalid";
-            line.textContent = "INTEGRITY: FAILED";
-            detail.textContent =
-                "The hash chain is broken" +
-                (verification.brokenAtId ? " at entry " + verification.brokenAtId : "") +
-                (verification.reason ? " (" + verification.reason + ")" : "") +
-                ". " +
-                (verification.totalEntries ?? 0) +
-                " entries were checked.";
-            container.appendChild(line);
-            container.appendChild(detail);
+        if (card) {
+            card.classList.remove("is-valid", "is-invalid", "is-incident");
+            if (summary.state === "valid") {
+                card.classList.add("is-valid");
+            } else if (summary.state === "incident") {
+                card.classList.add("is-invalid", "is-incident");
+            } else if (summary.state === "failed") {
+                card.classList.add("is-invalid");
+            }
         }
+
+        renderIncidentDetails(el("audit-chain-status-ext"), verification);
     }
 
     async function verifyChain() {
@@ -2366,102 +2676,52 @@
         const bannerText = el("audit-integrity-text");
         const bannerCard = el("audit-integrity-card");
         const bannerExt = el("audit-chain-status-ext");
+        const dashStatus = el("admin-chain-status");
+        const dashCard = el("admin-chain-card");
+        const buttons = [el("btn-verify-chain"), el("btn-verify-chain-dash")].filter(Boolean);
 
         if (bannerTitle) bannerTitle.textContent = "INTEGRITY: NOT VERIFIED";
         if (bannerText) bannerText.textContent = "Checking the hash chain…";
-        if (bannerCard) bannerCard.classList.remove("is-valid", "is-invalid");
+        if (bannerCard) {
+            bannerCard.classList.remove("is-valid", "is-invalid", "is-incident");
+            bannerCard.setAttribute("aria-busy", "true");
+        }
         if (bannerExt) clear(bannerExt);
+        if (dashStatus) {
+            clear(dashStatus);
+            const line = document.createElement("div");
+            line.className = "chain-status-line";
+            line.textContent = "Checking the hash chain…";
+            dashStatus.appendChild(line);
+        }
+        if (dashCard) {
+            dashCard.setAttribute("aria-busy", "true");
+        }
+        buttons.forEach((button) => {
+            button.disabled = true;
+        });
 
         try {
             const verification = await api("GET", "/api/admin/verify-chain");
-            renderChainStatus(el("admin-chain-status"), verification);
-
-            if (!verification || typeof verification.valid !== "boolean") {
-                if (bannerTitle) bannerTitle.textContent = "INTEGRITY: NOT VERIFIED";
-                if (bannerText) bannerText.textContent = "The server did not report a verification result.";
-                return;
-            }
-
-            if (verification.status === "unavailable") {
-                if (bannerTitle) bannerTitle.textContent = "INTEGRITY: NOT VERIFIED";
-                if (bannerText) bannerText.textContent = verification.message || "Verification service unavailable: database or verifier could not be reached.";
-                return;
-            }
-
-            if (bannerTitle) {
-                if (verification.valid === true) {
-                    bannerTitle.textContent = "INTEGRITY: VERIFIED";
-                    if (bannerCard) bannerCard.classList.add("is-valid");
-                } else {
-                    bannerTitle.textContent = "INTEGRITY: FAILED";
-                    if (bannerCard) bannerCard.classList.add("is-invalid");
-                }
-            }
-
-            if (bannerText) {
-                if (verification.valid === true) {
-                    bannerText.textContent =
-                        "All " +
-                        (verification.totalEntries ?? 0) +
-                        " entries hash-chain correctly.";
-                } else if (verification.status === "documented_incident") {
-                    bannerText.textContent =
-                        "The hash chain is broken at entry " +
-                        (verification.brokenAtId ?? "438") +
-                        " (documented incident " +
-                        (verification.incident?.code || "INC-2026-438") +
-                        "). Historical records are preserved and documented.";
-                } else {
-                    bannerText.textContent =
-                        "The hash chain is broken at entry " +
-                        (verification.brokenAtId ?? "unknown") +
-                        ". This needs a server-side investigation.";
-                }
-            }
-
-            if (bannerExt && verification.status === "documented_incident") {
-                clear(bannerExt);
-                const segCard = document.createElement("div");
-                segCard.className = "chain-status-card";
-                const segHead = document.createElement("div");
-                segHead.className = "chain-status-row";
-                const segLabel = document.createElement("span");
-                segLabel.className = "chain-status-label";
-                segLabel.textContent = "Post-incident segment (438 → " + (verification.latestEntryId || "latest") + ")";
-                const segBadge = document.createElement("span");
-                segBadge.className = "chain-badge badge-success";
-                segBadge.textContent = "✓ Verified intact";
-                segHead.appendChild(segLabel);
-                segHead.appendChild(segBadge);
-                const segDesc = document.createElement("div");
-                segDesc.className = "chain-status-detail";
-                segDesc.textContent = "Cryptographically verified continuous hash chain from entry 438 through entry #" + (verification.latestEntryId || "latest") + ".";
-                segCard.appendChild(segHead);
-                segCard.appendChild(segDesc);
-                bannerExt.appendChild(segCard);
-
-                const appCard = document.createElement("div");
-                appCard.className = "chain-status-card";
-                const appHead = document.createElement("div");
-                appHead.className = "chain-status-row";
-                const appLabel = document.createElement("span");
-                appLabel.className = "chain-status-label";
-                appLabel.textContent = "New append health";
-                const appBadge = document.createElement("span");
-                appBadge.className = "chain-badge badge-success";
-                appBadge.textContent = "✓ Active & continuous";
-                appHead.appendChild(appLabel);
-                appHead.appendChild(appBadge);
-                const appDesc = document.createElement("div");
-                appDesc.className = "chain-status-detail";
-                appDesc.textContent = "New events correctly link to the preceding chain head. Documented break INC-2026-438 remains isolated.";
-                appCard.appendChild(appHead);
-                appCard.appendChild(appDesc);
-                bannerExt.appendChild(appCard);
-            }
+            renderChainStatus(dashStatus, verification);
+            renderAuditBanner(verification);
         } catch (error) {
-            if (bannerTitle) bannerTitle.textContent = "INTEGRITY: NOT VERIFIED";
-            if (bannerText) bannerText.textContent = (error && error.message) ? error.message : "Verification service unavailable.";
+            const unavailable = {
+                valid: false,
+                status: "unavailable",
+                message:
+                    error && error.message
+                        ? error.message
+                        : "Verification service unavailable: database or verifier could not be reached."
+            };
+            renderChainStatus(dashStatus, unavailable);
+            renderAuditBanner(unavailable);
+        } finally {
+            buttons.forEach((button) => {
+                button.disabled = false;
+            });
+            if (bannerCard) bannerCard.removeAttribute("aria-busy");
+            if (dashCard) dashCard.removeAttribute("aria-busy");
         }
     }
 
@@ -2507,6 +2767,64 @@
         }
     }
 
+    // ── Profile: authenticated request history ──────────────────────────────────
+    let myRequestsSerial = 0;
+
+    function renderMyRequests(requests) {
+        const tbody = el("my-requests-tbody"); clear(tbody);
+        const roleRequests = requests.filter((request) => request.requestType === "document_owner_upgrade");
+        setHidden(el("my-requests-empty"), requests.length !== 0);
+        requests.forEach((request) => {
+            const tr = document.createElement("tr");
+            const type = request.requestType === "document_owner_upgrade" ? "Document Owner upgrade" : request.requestType || "Request";
+            tr.appendChild(makeCell(type));
+            tr.appendChild(makeCell(request.requestedRole ? roleLabel(request.requestedRole) : request.targetResourceId || request.requestedPermission || "—"));
+            const statusCell = document.createElement("td"); statusCell.appendChild(makeBadge(requestStatusLabel(request.status), "badge-status badge-" + request.status)); tr.appendChild(statusCell);
+            tr.appendChild(makeCell(formatTime(request.submittedAt)));
+            tr.appendChild(makeCell(request.decidedAt ? formatTime(request.decidedAt) : "—"));
+            const detail = [request.decisionNote ? "Note: " + request.decisionNote : "", request.reviewerRole ? "Reviewer role: " + roleLabel(request.reviewerRole) : "", request.reviewerUserId ? "Reviewer ID: " + request.reviewerUserId : "", request.nextEligibleAt ? "Eligible to re-request: " + formatTime(request.nextEligibleAt) : ""].filter(Boolean).join(" · ");
+            tr.appendChild(makeCell(detail || "—", "request-decision-details"));
+            const action = document.createElement("td");
+            if (request.status === "pending" && request.requestType === "document_owner_upgrade") {
+                const cancel = actionButton("Cancel", "btn-action danger", (event) => cancelMyRequest(request, event.currentTarget));
+                cancel.setAttribute("aria-label", "Cancel your pending Document Owner request"); action.appendChild(cancel);
+            } else action.textContent = "—";
+            tr.appendChild(action); tbody.appendChild(tr);
+        });
+        const pending = roleRequests.some((request) => request.status === "pending");
+        const cooldownRequest = roleRequests.find((request) => request.status === "rejected" && request.nextEligibleAt && new Date(request.nextEligibleAt).getTime() > Date.now());
+        const formAllowed = state.user && state.user.role === "viewer" && !pending && !cooldownRequest;
+        el("role-request-submit").disabled = !formAllowed;
+        const reason = el("role-request-disabled-reason");
+        reason.textContent = pending ? "A request is pending review. You can submit another after it is resolved or cancelled." : cooldownRequest ? "You can request again after " + formatTime(cooldownRequest.nextEligibleAt) + ". This time is informational; the server decides eligibility." : state.user && state.user.role !== "viewer" ? "Only Viewer accounts can request Document Owner access." : "The server enforces request eligibility.";
+        el("my-requests-eligibility").textContent = cooldownRequest ? "Next eligible re-request time: " + formatTime(cooldownRequest.nextEligibleAt) + "." : "";
+    }
+
+    async function loadMyRequests() {
+        if (!state.user) return;
+        const serial = ++myRequestsSerial;
+        setHidden(el("my-requests-loading"), false); setHidden(el("my-requests-content"), true); setHidden(el("my-requests-retry"), true); setMessage(el("my-requests-error"), null);
+        try {
+            const data = await api("GET", "/api/requests/mine");
+            if (serial !== myRequestsSerial) return;
+            if (!data || !Array.isArray(data.requests)) throw new Error("The server returned an invalid request list.");
+            renderMyRequests(data.requests); setHidden(el("my-requests-loading"), true); setHidden(el("my-requests-content"), false);
+        } catch (error) {
+            if (serial !== myRequestsSerial) return;
+            setHidden(el("my-requests-loading"), true); setHidden(el("my-requests-content"), true); setMessage(el("my-requests-error"), error.message || "Unable to load your requests.", true); setHidden(el("my-requests-retry"), false);
+        }
+    }
+
+    async function cancelMyRequest(request, button) {
+        await withBusy(button, async () => {
+            try {
+                const result = await api("POST", "/api/requests/" + encodeURIComponent(request.id) + "/cancel", {});
+                if (!result || !result.request || result.request.status !== "cancelled") throw new Error("The server did not confirm cancellation. Refresh to check the request status.");
+                await loadMyRequests();
+            } catch (error) { setMessage(el("my-requests-error"), error.message || "The request could not be cancelled.", true); }
+        });
+    }
+
     // ── Profile ────────────────────────────────────────────────────────────────
 
     loaders.profile = function loadProfile() {
@@ -2517,6 +2835,7 @@
         el("profile-created").value = formatDate(state.user.created_at);
         setMessage(el("profile-error"), null);
         setMessage(el("profile-success"), null);
+        loadMyRequests();
     };
 
     // ── Enter / leave the app ──────────────────────────────────────────────────
@@ -2561,6 +2880,7 @@
         hideAuthBanner();
         hideAppBanner();
         applyRole();
+        if (state.user.role === "admin") loadAdminRequestCounts().catch(() => {});
 
         const start = DEFAULT_VIEW_BY_ROLE[state.user.role] || "shared";
         switchView(start);
@@ -2964,6 +3284,39 @@
             });
         });
 
+        const roleRequestForm = el("role-request-form");
+        roleRequestForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            setMessage(el("role-request-feedback"), null);
+            const reason = el("role-request-justification").value.trim();
+            if (reason.length > 500) {
+                setMessage(el("role-request-feedback"), "Reason must be at most 500 characters.", true);
+                return;
+            }
+            const button = el("role-request-submit");
+            await withBusy(button, async () => {
+                try {
+                    const result = await api("POST", "/api/requests", { requestType: "document_owner_upgrade", reason });
+                    if (!result || !result.request || result.request.status !== "pending") throw new Error("The server did not confirm submission. Refresh your requests to check status.");
+                    roleRequestForm.reset(); toast("Your Owner access request was submitted.", "success"); await loadMyRequests();
+                } catch (error) {
+                    setMessage(el("role-request-feedback"), error.message || "Your request was not submitted.", true);
+                    if (error.status === 409 || error.status === 429) await loadMyRequests();
+                }
+            });
+        });
+        el("my-requests-retry").addEventListener("click", loadMyRequests);
+        el("admin-requests-retry").addEventListener("click", () => loaders["admin-requests"]());
+        el("requests-status-filter").addEventListener("change", () => loaders["admin-requests"]());
+        el("requests-type-filter").addEventListener("change", () => loaders["admin-requests"]());
+        el("requests-search").addEventListener("input", () => {
+            window.clearTimeout(adminRequestFiltersTimer);
+            adminRequestFiltersTimer = window.setTimeout(() => loaders["admin-requests"](), 300);
+        });
+        el("requests-search").addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); window.clearTimeout(adminRequestFiltersTimer); loaders["admin-requests"](); }
+        });
+
         el("password-form").addEventListener("submit", async (event) => {
             event.preventDefault();
             setMessage(el("password-error"), null);
@@ -2990,6 +3343,46 @@
                 }
             });
         });
+
+        // ── Admin: users search and filters ──
+        const adminUsersSearch = el("admin-users-search");
+        const runAdminUsersSearch = debounce(() => {
+            state.usersOffset = 0;
+            loaders["admin-users"]();
+        }, 300);
+
+        if (adminUsersSearch) {
+            adminUsersSearch.addEventListener("input", runAdminUsersSearch);
+            adminUsersSearch.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                runAdminUsersSearch.cancel();
+                state.usersOffset = 0;
+                loaders["admin-users"]();
+            });
+        }
+
+        ["admin-users-role-filter", "admin-users-status-filter"].forEach((id) => {
+            const node = el(id);
+            if (!node) return;
+            node.addEventListener("change", () => {
+                state.usersOffset = 0;
+                loaders["admin-users"]();
+            });
+        });
+
+        const clearAdminUserFilters = el("admin-users-clear-filters");
+        if (clearAdminUserFilters) {
+            clearAdminUserFilters.addEventListener("click", () => {
+                runAdminUsersSearch.cancel();
+                if (adminUsersSearch) adminUsersSearch.value = "";
+                el("admin-users-role-filter").value = "";
+                el("admin-users-status-filter").value = "";
+                state.usersOffset = 0;
+                loaders["admin-users"]();
+                if (adminUsersSearch) adminUsersSearch.focus();
+            });
+        }
 
         // ── Admin: add user ──
         el("btn-add-user").addEventListener("click", () => {
@@ -3148,12 +3541,17 @@
 
     function debounce(fn, delay) {
         let timer = null;
-        return function () {
+        const debounced = function () {
             const args = arguments;
             const context = this;
             window.clearTimeout(timer);
             timer = window.setTimeout(() => fn.apply(context, args), delay);
         };
+        debounced.cancel = function () {
+            window.clearTimeout(timer);
+            timer = null;
+        };
+        return debounced;
     }
 
     // ── Boot ───────────────────────────────────────────────────────────────────
