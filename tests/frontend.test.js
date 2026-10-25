@@ -21,11 +21,13 @@ const app = require("../src/app");
 
 describe("TrustVault Frontend: static contract against the approved v3 PDFs", () => {
     const indexPath = path.join(__dirname, "../public/index.html");
+    const landingPath = path.join(__dirname, "../public/landing.html");
     const appJsPath = path.join(__dirname, "../public/js/app.js");
     const apiJsPath = path.join(__dirname, "../public/js/api.js");
     const stylesPath = path.join(__dirname, "../public/css/styles.css");
 
     let indexHtml = "";
+    let landingHtml = "";
     let appJs = "";
     let apiJs = "";
     let stylesCss = "";
@@ -33,6 +35,7 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
 
     beforeAll(() => {
         indexHtml = fs.readFileSync(indexPath, "utf8");
+        landingHtml = fs.readFileSync(landingPath, "utf8");
         appJs = fs.readFileSync(appJsPath, "utf8");
         apiJs = fs.readFileSync(apiJsPath, "utf8");
         stylesCss = fs.readFileSync(stylesPath, "utf8");
@@ -95,17 +98,36 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
     // ── 1. Static file delivery ───────────────────────────────────────────────
 
     describe("1. Static file delivery", () => {
-        it("serves index.html at root", async () => {
+        it("serves the public landing page at root", async () => {
             const res = await request(app).get("/");
             expect(res.status).toBe(200);
             expect(res.headers["content-type"]).toMatch(/html/);
-            expect(res.text).toContain("TrustVault");
+            expect(res.text).toContain('id="landing-page"');
+            expect(res.text).toContain("Your documents,");
+        });
+
+        it("serves the authenticated application at /app", async () => {
+            const res = await request(app).get("/app");
+            expect(res.status).toBe(200);
+            expect(res.headers["content-type"]).toMatch(/html/);
+            expect(res.text).toContain('id="auth-screen"');
+            expect(res.text).toContain('id="app-shell"');
         });
 
         it("serves styles.css", async () => {
             const res = await request(app).get("/css/styles.css");
             expect(res.status).toBe(200);
             expect(res.headers["content-type"]).toMatch(/css/);
+        });
+
+        it("serves the landing stylesheet and script", async () => {
+            const css = await request(app).get("/css/landing.css");
+            expect(css.status).toBe(200);
+            expect(css.headers["content-type"]).toMatch(/css/);
+
+            const js = await request(app).get("/js/landing.js");
+            expect(js.status).toBe(200);
+            expect(js.headers["content-type"]).toMatch(/javascript/);
         });
 
         it("serves app.js and api.js", async () => {
@@ -116,6 +138,49 @@ describe("TrustVault Frontend: static contract against the approved v3 PDFs", ()
             const resApi = await request(app).get("/js/api.js");
             expect(resApi.status).toBe(200);
             expect(resApi.headers["content-type"]).toMatch(/javascript/);
+        });
+    });
+
+    // ── 1a. Public landing page ──────────────────────────────────────────────
+
+    describe("1a. Public landing page", () => {
+        it("routes both calls to action to the real application entry points", () => {
+            expect(landingHtml).toContain('href="/app?mode=login"');
+            expect(landingHtml).toContain('href="/app?mode=register"');
+        });
+
+        it("labels the product and audit illustrations as static examples", () => {
+            expect(landingHtml).toContain("Illustrative product preview");
+            expect(landingHtml).toContain("not live application data");
+            expect(landingHtml).toContain("Illustrative audit chain");
+            expect(landingHtml).toContain(
+                "No live verification result or timestamp is shown here."
+            );
+            expect(landingHtml).not.toContain("Chain verified");
+            expect(landingHtml).not.toContain("no changes detected");
+        });
+
+        it("describes only implemented capabilities", () => {
+            for (const claim of [
+                "Admin, Document Owner, and Viewer",
+                "5 MiB",
+                "PDF, JPEG, and PNG",
+                "Read or Edit",
+                "SHA-256 hash chain",
+                "PostgreSQL"
+            ]) {
+                expect(landingHtml).toContain(claim);
+            }
+        });
+
+        it("does not load application data from the landing page", () => {
+            const landingJs = fs.readFileSync(
+                path.join(__dirname, "../public/js/landing.js"),
+                "utf8"
+            );
+
+            expect(landingJs).not.toMatch(/\bfetch\s*\(/);
+            expect(landingJs).not.toContain("/api/");
         });
     });
 

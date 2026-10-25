@@ -2,17 +2,24 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const pool = require("../db");
 const { requireAuth } = require("../middleware/auth");
+const { lockActiveActorForWrite } = require("../services/accessService");
 const {
     writeAuditLog,
-    verifyAuditChain,
-    lockAuditChain
+    lockAuditChain,
+    verifyAuditChain
 } = require("../services/auditService");
 const { escapeLikePattern } = require("../services/documentService");
 const {
     passwordProblem: validatePassword,
     generateTemporaryPassword
 } = require("../services/passwordPolicy");
-const { resolvePendingUpgradeRequest } = require("../services/requestService");
+const {
+    UserManagementError,
+    ASSIGNABLE_ROLES,
+    parseReason,
+    changeUserRole,
+    setUserStatus
+} = require("../services/userManagementService");
 
 const router = express.Router();
 
@@ -39,9 +46,6 @@ const MAX_USER_PAGE_SIZE = 100;
 const MAX_USER_PAGE = 10000;
 const MAX_USER_OFFSET = 1000000;
 const DEFAULT_USER_PAGE_SIZE = 50;
-
-/** Advisory lock guarding the "at least one active administrator" invariant. */
-const ADMIN_INVARIANT_LOCK_KEY = 918273645;
 
 function validUuid(id) {
     return typeof id === "string" && UUID_PATTERN.test(id);
@@ -151,32 +155,6 @@ function parseDateFilter(value) {
     if (typeof value !== "string" || !value.trim()) return null;
     const parsed = new Date(value.trim());
     return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-/**
- * Counts the administrators that are still able to administer the system.
- */
-async function countActiveAdmins(client = pool) {
-    const result = await client.query(
-        "SELECT COUNT(*)::int AS cnt FROM users WHERE role = 'admin' AND is_disabled = false"
-    );
-    return result.rows[0].cnt;
-}
-
-/**
- * Removes every server-side session of a user.
- *
- * Called when an account is disabled so that an already issued session cookie
- * stops working immediately instead of only being refused by the next
- * request. The rows are removed from the session store; the cookie itself
- * becomes meaningless because it no longer resolves to a session.
- */
-async function invalidateUserSessions(client, userId) {
-    const result = await client.query(
-        "DELETE FROM user_sessions WHERE sess->>'userId' = $1",
-        [userId]
-    );
-    return result.rowCount || 0;
 }
 
 // ── Admin auth guard ──────────────────────────────────────────────────────────
@@ -560,8 +538,9 @@ router.get("/users", async (req, res) => {
 // Backs the "Add user" flow of the Admin console.
 //
 // Role policy: the Admin console can only create Viewer or Document Owner
-// accounts. The admin role is deliberately not offered here — an administrator
-// can still promote a user to admin later through PATCH /api/admin/users/:id/role.
+// accounts. The admin role is deliberately not offered here: this API never
+// mints an administrator. Only an existing Admin account may perform the
+// guarded Viewer <-> Document Owner transitions.
 //
 // Initial credential handling (documented decision, the design spec leaves it
 // open): the caller may pass an explicit `password`. When it does not, the
@@ -632,40 +611,82 @@ router.post("/users", async (req, res) => {
 
         const passwordHash = await bcrypt.hash(plainPassword, 12);
 
-        const result = await pool.query(
-            `INSERT INTO users (name, email, password_hash, role)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT DO NOTHING
-             RETURNING id, name, email, role, is_disabled, created_at`,
-            [cleanName, cleanEmail, passwordHash, requestedRole]
-        );
+        let createdUser = null;
+        const client = await pool.connect();
 
-        if (result.rows.length === 0) {
-            await writeAuditLog(req, "admin_user_create", "denied", null, {
-                email: cleanEmail,
-                reason: "duplicate_email"
+        try {
+            await client.query("BEGIN");
+
+            // Lock order matches every other account workflow: audit chain
+            // first, then the acting account row.
+            await lockAuditChain(client);
+
+            // Hashing the password takes long enough that a concurrent
+            // demotion or disable could otherwise slip between `requireAuth`
+            // and the insert. Re-read and lock the administrator now so the
+            // account creation either happens while the privilege is current
+            // or is refused.
+            const actor = await lockActiveActorForWrite(client, req.user.id, {
+                roles: ["admin"]
             });
-            return res.status(409).json({
-                message: "An account with this email already exists"
-            });
+
+            if (!actor) {
+                await client.query("ROLLBACK");
+                await writeAuditLog(req, "admin_user_create", "denied", null, {
+                    email: cleanEmail,
+                    reason: "administrator_privilege_changed"
+                });
+                return res.status(403).json({
+                    message: "Access denied: Administrator privileges required"
+                });
+            }
+
+            const result = await client.query(
+                `INSERT INTO users (name, email, password_hash, role)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT DO NOTHING
+                 RETURNING id, name, email, role, is_disabled, created_at`,
+                [cleanName, cleanEmail, passwordHash, requestedRole]
+            );
+
+            if (result.rows.length === 0) {
+                await client.query("ROLLBACK");
+                await writeAuditLog(req, "admin_user_create", "denied", null, {
+                    email: cleanEmail,
+                    reason: "duplicate_email"
+                });
+                return res.status(409).json({
+                    message: "An account with this email already exists"
+                });
+            }
+
+            createdUser = result.rows[0];
+
+            // The account and its audit row commit together. A failed audit
+            // therefore cannot leave an unrecorded account behind.
+            await writeAuditLog(
+                req,
+                "admin_user_create",
+                "success",
+                null,
+                {
+                    targetUserId: createdUser.id,
+                    targetEmail: createdUser.email,
+                    newRole: createdUser.role,
+                    // Never the credential itself — only whether one was generated.
+                    temporaryPasswordGenerated: passwordWasGenerated
+                },
+                createdUser.id,
+                client
+            );
+
+            await client.query("COMMIT");
+        } catch (error) {
+            await client.query("ROLLBACK").catch(() => {});
+            throw error;
+        } finally {
+            client.release();
         }
-
-        const createdUser = result.rows[0];
-
-        await writeAuditLog(
-            req,
-            "admin_user_create",
-            "success",
-            null,
-            {
-                targetUserId: createdUser.id,
-                targetEmail: createdUser.email,
-                newRole: createdUser.role,
-                // Never the credential itself — only whether one was generated.
-                temporaryPasswordGenerated: passwordWasGenerated
-            },
-            createdUser.id
-        );
 
         return res.status(201).json({
             message: "User created",
@@ -684,10 +705,9 @@ router.post("/users", async (req, res) => {
     }
 });
 
-// ── GET /api/admin/role-upgrade-requests — Review queue ──────────────────────
-// Defaults to pending requests (oldest first). `status=resolved` returns the
-// most recently decided requests so the Admin console can show who resolved
-// them and when.
+// ── PATCH /api/admin/users/:id/role — Guarded Viewer <-> Owner transition ─────
+// The role, reason, legacy grants, pending-request resolution and audit rows
+// commit together in userManagementService.
 router.patch("/users/:id/role", async (req, res) => {
     const targetId = req.params.id;
 
@@ -695,17 +715,19 @@ router.patch("/users/:id/role", async (req, res) => {
         return res.status(400).json({ message: "Invalid user ID" });
     }
 
-    const { role } = req.body || {};
+    const { role, reason } = req.body || {};
     const targetRole = typeof role === "string" ? role.trim().toLowerCase() : "";
 
-    if (!VALID_ROLES.has(targetRole)) {
+    // Admin accounts are never minted here. Only the Viewer <-> Document
+    // Owner transition is supported; an Admin target is protected below.
+    if (!ASSIGNABLE_ROLES.includes(targetRole)) {
         await writeAuditLog(req, "admin_user_role_change", "denied", null, {
             targetUserId: targetId,
             reason: "invalid_role",
             requestedRole: typeof role === "string" ? role.slice(0, 40) : null
         });
         return res.status(400).json({
-            message: "Role must be one of: admin, document_owner, viewer"
+            message: "Role must be one of: document_owner, viewer"
         });
     }
 
@@ -719,140 +741,39 @@ router.patch("/users/:id/role", async (req, res) => {
         });
     }
 
-    const client = await pool.connect();
+    const parsedReason = parseReason(reason);
+    if (parsedReason.error) {
+        await writeAuditLog(req, "admin_user_role_change", "denied", null, {
+            targetUserId: targetId,
+            reason: "invalid_reason",
+            requestedRole: targetRole
+        });
+        return res.status(400).json({ message: parsedReason.error });
+    }
 
     try {
-        await client.query("BEGIN");
-
-        // Keep the workflow lock order consistent: audit chain → administrator
-        // invariant → account row → request row. Submissions and decisions
-        // start with the audit lock, so acquiring it here prevents a deadlock
-        // between a direct role change and a concurrent review.
-        await lockAuditChain(client);
-
-        // Serialise every role/status change so the "at least one active
-        // administrator" invariant cannot be broken by concurrent requests.
-        await client.query("SELECT pg_advisory_xact_lock($1)", [ADMIN_INVARIANT_LOCK_KEY]);
-
-        const targetResult = await client.query(
-            "SELECT id, name, email, role, is_disabled FROM users WHERE id = $1 FOR UPDATE",
-            [targetId]
-        );
-
-        if (targetResult.rows.length === 0) {
-            await client.query("ROLLBACK");
-            await writeAuditLog(req, "admin_user_role_change", "denied", null, {
-                targetUserId: targetId,
-                reason: "user_not_found"
-            });
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        const target = targetResult.rows[0];
-        const previousRole = target.role;
-
-        if (previousRole === "admin" && targetRole !== "admin") {
-            const activeAdmins = await countActiveAdmins(client);
-            if (activeAdmins <= 1) {
-                await client.query("ROLLBACK");
-                await writeAuditLog(req, "admin_user_role_change", "denied", null, {
-                    targetUserId: targetId,
-                    reason: "last_active_admin",
-                    previousRole
-                });
-                return res.status(409).json({
-                    message: "Cannot demote the last active administrator"
-                });
-            }
-        }
-
-        const updated = await client.query(
-            `UPDATE users
-             SET role = $1, updated_at = NOW()
-             WHERE id = $2
-             RETURNING id, name, email, role, is_disabled`,
-            [targetRole, targetId]
-        );
-
-        // A direct role change also settles any request that is still pending,
-        // so the account can never end up with a pending request whose outcome
-        // contradicts the actual role. Promoting to document_owner approves it;
-        // every other assignment rejects it.
-        const requestDecision =
-            targetRole === "document_owner" ? "approved" : "rejected";
-        const resolvedRequest = await resolvePendingUpgradeRequest(client, {
-            userId: targetId,
-            status: requestDecision,
-            decidedBy: req.user.id
-        });
-
-        const auditDetails = {
-            targetUserId: targetId,
-            targetEmail: updated.rows[0].email,
-            previousRole,
-            newRole: targetRole
-        };
-
-        if (resolvedRequest) {
-            auditDetails.pendingRequestId = resolvedRequest.id;
-            auditDetails.pendingRequestOutcome = requestDecision;
-        }
-
-        // The role update, the pending-request resolution and both audit
-        // events commit together. If an append fails, nothing is changed.
-        await writeAuditLog(
+        const result = await changeUserRole({
             req,
-            "admin_user_role_change",
-            "success",
-            null,
-            auditDetails,
             targetId,
-            client
-        );
-
-        if (resolvedRequest) {
-            await writeAuditLog(
-                req,
-                requestDecision === "approved"
-                    ? "role_upgrade_request_approved"
-                    : "role_upgrade_request_rejected",
-                "success",
-                null,
-                {
-                    requestId: resolvedRequest.id,
-                    requestedRole: resolvedRequest.requested_role,
-                    previousRole,
-                    newRole: targetRole,
-                    viaDirectRoleChange: true
-                },
-                targetId,
-                client
-            );
-        }
-
-        await client.query("COMMIT");
+            newRole: targetRole,
+            reason: parsedReason.value
+        });
 
         return res.json({
-            message: resolvedRequest
+            message: result.request
                 ? "User role updated and pending upgrade request resolved"
                 : "User role updated",
-            user: updated.rows[0],
-            request: resolvedRequest
-                ? {
-                      id: resolvedRequest.id,
-                      status: requestDecision,
-                      decidedAt: resolvedRequest.decided_at
-                  }
-                : null
+            user: result.user,
+            request: result.request
         });
     } catch (error) {
-        await client.query("ROLLBACK").catch(() => {});
+        if (error instanceof UserManagementError) {
+            return res.status(error.status).json({ message: error.message });
+        }
         console.error("Admin role change failed:", error.message);
         return res.status(500).json({
             message: "Unable to update user role. Nothing was changed."
         });
-    } finally {
-        client.release();
     }
 });
 
@@ -860,7 +781,8 @@ router.patch("/users/:id/role", async (req, res) => {
 // Disabling an account blocks the next login and invalidates every session
 // that the account currently holds. Re-enabling restores the ability to log
 // in, but it never resurrects the invalidated sessions: the user has to
-// authenticate again.
+// authenticate again. Both directions require a reason and are audited in the
+// same transaction as the status and session changes.
 router.patch("/users/:id/disable", async (req, res) => {
     const targetId = req.params.id;
 
@@ -876,82 +798,39 @@ router.patch("/users/:id/disable", async (req, res) => {
         return res.status(400).json({ message: "Administrators cannot disable their own account" });
     }
 
-    const { disabled } = req.body || {};
+    const { disabled, reason } = req.body || {};
     if (typeof disabled !== "boolean") {
         return res.status(400).json({ message: "Provide disabled: true or false" });
     }
 
-    const client = await pool.connect();
+    const parsedReason = parseReason(reason);
+    if (parsedReason.error) {
+        const action = disabled ? "admin_user_disabled" : "admin_user_enabled";
+        await writeAuditLog(req, action, "denied", null, {
+            targetUserId: targetId,
+            reason: "invalid_reason",
+            disabled
+        });
+        return res.status(400).json({ message: parsedReason.error });
+    }
 
     try {
-        await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock($1)", [ADMIN_INVARIANT_LOCK_KEY]);
-
-        const targetResult = await client.query(
-            "SELECT id, name, email, role, is_disabled FROM users WHERE id = $1 FOR UPDATE",
-            [targetId]
-        );
-
-        if (targetResult.rows.length === 0) {
-            await client.query("ROLLBACK");
-            await writeAuditLog(req, "admin_user_disabled", "denied", null, {
-                targetUserId: targetId,
-                reason: "user_not_found"
-            });
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        const target = targetResult.rows[0];
-
-        if (disabled && target.role === "admin") {
-            const activeAdmins = await countActiveAdmins(client);
-            if (activeAdmins <= 1) {
-                await client.query("ROLLBACK");
-                await writeAuditLog(req, "admin_user_disabled", "denied", null, {
-                    targetUserId: targetId,
-                    reason: "last_active_admin"
-                });
-                return res.status(409).json({
-                    message: "Cannot disable the last active administrator"
-                });
-            }
-        }
-
-        const updated = await client.query(
-            `UPDATE users
-             SET is_disabled = $1, updated_at = NOW()
-             WHERE id = $2
-             RETURNING id, name, email, role, is_disabled`,
-            [disabled, targetId]
-        );
-
-        // Invalidate the account's live sessions as part of the same
-        // transaction: after this commit the old cookies are worthless.
-        const revokedSessions = disabled ? await invalidateUserSessions(client, targetId) : 0;
-
-        await client.query("COMMIT");
-
-        await writeAuditLog(
+        const result = await setUserStatus({
             req,
-            disabled ? "admin_user_disabled" : "admin_user_enabled",
-            "success",
-            null,
-            {
-                targetUserId: targetId,
-                targetEmail: updated.rows[0].email,
-                disabled,
-                revokedSessions
-            },
-            targetId
-        );
+            targetId,
+            disabled,
+            reason: parsedReason.value
+        });
 
         return res.json({
             message: disabled ? "Account disabled" : "Account enabled",
-            user: updated.rows[0],
-            revokedSessions
+            user: result.user,
+            revokedSessions: result.revokedSessions
         });
     } catch (error) {
-        await client.query("ROLLBACK").catch(() => {});
+        if (error instanceof UserManagementError) {
+            return res.status(error.status).json({ message: error.message });
+        }
 
         // is_disabled column missing means the migration hasn't added it yet.
         if (error.code === "42703") {
@@ -962,8 +841,6 @@ router.patch("/users/:id/disable", async (req, res) => {
 
         console.error("Admin account disable failed:", error.message);
         return res.status(500).json({ message: "Unable to update account status" });
-    } finally {
-        client.release();
     }
 });
 

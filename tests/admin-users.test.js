@@ -13,8 +13,12 @@ const pool = require("../src/db");
 const {
     resetDatabase,
     createUser,
-    login
+    login,
+    fetchRow,
+    fetchAuditLogs
 } = require("./helpers");
+
+const REASON = "Operational access change approved by an administrator.";
 
 describe("Admin users: search, filters, pagination and protections", () => {
     let adminAgent;
@@ -365,7 +369,7 @@ describe("Admin users: search, filters, pagination and protections", () => {
         test("changes the role of the intended account and the filtered list reflects it", async () => {
             const change = await adminAgent
                 .patch(`/api/admin/users/${users.roleTarget.id}/role`)
-                .send({ role: "document_owner" });
+                .send({ role: "document_owner", reason: REASON });
 
             expect(change.status).toBe(200);
             expect(change.body.user.id).toBe(users.roleTarget.id);
@@ -389,7 +393,7 @@ describe("Admin users: search, filters, pagination and protections", () => {
         test("disables and re-enables the intended account, and status filters follow", async () => {
             const disable = await adminAgent
                 .patch(`/api/admin/users/${users.statusTarget.id}/disable`)
-                .send({ disabled: true });
+                .send({ disabled: true, reason: REASON });
 
             expect(disable.status).toBe(200);
             expect(disable.body.user.id).toBe(users.statusTarget.id);
@@ -411,7 +415,7 @@ describe("Admin users: search, filters, pagination and protections", () => {
 
             const enable = await adminAgent
                 .patch(`/api/admin/users/${users.statusTarget.id}/disable`)
-                .send({ disabled: false });
+                .send({ disabled: false, reason: REASON });
             expect(enable.status).toBe(200);
             expect(enable.body.user.id).toBe(users.statusTarget.id);
             expect(enable.body.user.is_disabled).toBe(false);
@@ -424,28 +428,28 @@ describe("Admin users: search, filters, pagination and protections", () => {
             expect(ids(activeAgain)).toEqual([users.statusTarget.id]);
         });
 
-        test("keeps the self-disable and last-active-administrator guards intact", async () => {
+        test("keeps the self-modification and protected-administrator guards intact", async () => {
             const selfDisable = await adminAgent
                 .patch(`/api/admin/users/${users.admin.id}/disable`)
-                .send({ disabled: true });
+                .send({ disabled: true, reason: REASON });
             const selfDemote = await adminAgent
                 .patch(`/api/admin/users/${users.admin.id}/role`)
-                .send({ role: "viewer" });
+                .send({ role: "viewer", reason: REASON });
             const demoteLastAdmin = await adminAgent
                 .patch(`/api/admin/users/${users.disabledAdmin.id}/role`)
-                .send({ role: "viewer" });
+                .send({ role: "viewer", reason: REASON });
             const disableLastAdmin = await adminAgent
                 .patch(`/api/admin/users/${users.disabledAdmin.id}/disable`)
-                .send({ disabled: true });
+                .send({ disabled: true, reason: REASON });
 
             expect(selfDisable.status).toBe(400);
             expect(selfDisable.body.message).toMatch(/cannot disable their own account/i);
             expect(selfDemote.status).toBe(400);
             expect(selfDemote.body.message).toMatch(/cannot change their own role/i);
             expect(demoteLastAdmin.status).toBe(409);
-            expect(demoteLastAdmin.body.message).toMatch(/last active administrator/i);
+            expect(demoteLastAdmin.body.message).toMatch(/administrator accounts cannot/i);
             expect(disableLastAdmin.status).toBe(409);
-            expect(disableLastAdmin.body.message).toMatch(/last active administrator/i);
+            expect(disableLastAdmin.body.message).toMatch(/administrator accounts cannot/i);
 
             const stillActive = await pool.query(
                 "SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin' AND is_disabled = false"
@@ -458,6 +462,41 @@ describe("Admin users: search, filters, pagination and protections", () => {
             );
             expect(adminAccount.rows[0].role).toBe("admin");
             expect(adminAccount.rows[0].is_disabled).toBe(false);
+        });
+    });
+
+    describe("account creation", () => {
+        test("creates a Viewer and commits the account with its audit entry", async () => {
+            const email = `created.viewer.${Date.now().toString(36)}@trustvault.test`;
+
+            const response = await adminAgent.post("/api/admin/users").send({
+                name: "Created Viewer",
+                email,
+                role: "viewer"
+            });
+
+            expect(response.status).toBe(201);
+            expect(response.body.user.email).toBe(email);
+            expect(response.body.user.role).toBe("viewer");
+            expect(typeof response.body.temporaryPassword).toBe("string");
+
+            const row = await fetchRow("users", "id = $1", [response.body.user.id]);
+            expect(row).not.toBeNull();
+            expect(row.role).toBe("viewer");
+            expect(row.is_disabled).toBe(false);
+
+            const logs = await fetchAuditLogs({
+                action: "admin_user_create",
+                outcome: "success"
+            });
+            const entry = logs.find(
+                (log) => log.target_user_id === response.body.user.id
+            );
+
+            expect(entry).toBeTruthy();
+            expect(entry.details.targetEmail).toBe(email);
+            expect(entry.details.newRole).toBe("viewer");
+            expect(entry.details.temporaryPasswordGenerated).toBe(true);
         });
     });
 });

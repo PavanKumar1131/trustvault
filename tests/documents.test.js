@@ -16,6 +16,7 @@ const {
     TEST_PASSWORD,
     VALID_PDF_BUFFER,
     VALID_PNG_BUFFER,
+    VALID_JPEG_BUFFER,
     SPOOFED_MALICIOUS_BUFFER,
     resetDatabase,
     createUser,
@@ -24,6 +25,8 @@ const {
     fetchRow,
     countRows
 } = require("./helpers");
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 describe("TrustVault document lifecycle", () => {
     const testRunId = Date.now().toString(36);
@@ -102,6 +105,96 @@ describe("TrustVault document lifecycle", () => {
         const document = await fetchRow("documents", "id = $1", [response.body.document.id]);
         expect(document.content_type).toBe("image/png");
         expect(Number(document.file_size)).toBe(VALID_PNG_BUFFER.length);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    test("2b. A JPEG upload is accepted and typed correctly", async () => {
+        const response = await agents.owner
+            .post("/api/documents")
+            .field("name", `Photo_${testRunId}`)
+            .attach("file", VALID_JPEG_BUFFER, "photo.jpg");
+
+        expect(response.status).toBe(201);
+        expect(response.body.document.content_type).toBe("image/jpeg");
+
+        const document = await fetchRow("documents", "id = $1", [response.body.document.id]);
+        expect(document.content_type).toBe("image/jpeg");
+        expect(Number(document.file_size)).toBe(VALID_JPEG_BUFFER.length);
+
+        const blob = await fetchRow("document_blobs", "storage_key = $1", [document.storage_key]);
+        expect(Buffer.from(blob.file_data).equals(VALID_JPEG_BUFFER)).toBe(true);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    test("2c. A file of exactly 5 MiB is accepted", async () => {
+        const exact = Buffer.concat([
+            VALID_PDF_BUFFER,
+            Buffer.alloc(MAX_FILE_SIZE - VALID_PDF_BUFFER.length)
+        ]);
+
+        const response = await agents.owner
+            .post("/api/documents")
+            .field("name", `ExactLimit_${testRunId}`)
+            .attach("file", exact, "exact-limit.pdf");
+
+        expect(response.status).toBe(201);
+        expect(Number(response.body.document.file_size)).toBe(MAX_FILE_SIZE);
+
+        const document = await fetchRow("documents", "id = $1", [response.body.document.id]);
+        expect(Number(document.file_size)).toBe(MAX_FILE_SIZE);
+
+        const blob = await fetchRow("document_blobs", "storage_key = $1", [document.storage_key]);
+        expect(blob.file_data.length).toBe(MAX_FILE_SIZE);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    test("2d. A file over 5 MiB is rejected with 413", async () => {
+        const tooLarge = Buffer.concat([
+            VALID_PDF_BUFFER,
+            Buffer.alloc(MAX_FILE_SIZE + 1 - VALID_PDF_BUFFER.length)
+        ]);
+        const beforeDocuments = await countRows("documents");
+        const beforeBlobs = await countRows("document_blobs");
+
+        const response = await agents.owner
+            .post("/api/documents")
+            .field("name", `OverLimit_${testRunId}`)
+            .attach("file", tooLarge, "over-limit.pdf");
+
+        expect(response.status).toBe(413);
+        expect(response.body.message).toMatch(/5 MB limit/i);
+
+        expect(await countRows("documents")).toBe(beforeDocuments);
+        expect(await countRows("document_blobs")).toBe(beforeBlobs);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    test("2e. Content detection, not the filename, decides the stored type", async () => {
+        const response = await agents.owner
+            .post("/api/documents")
+            .field("name", `MismatchedExtension_${testRunId}`)
+            .attach("file", VALID_PNG_BUFFER, "looks-like-a-pdf.pdf");
+
+        expect(response.status).toBe(201);
+        expect(response.body.document.content_type).toBe("image/png");
+        expect(response.body.document.original_filename).toBe("looks-like-a-pdf.pdf");
+
+        const document = await fetchRow("documents", "id = $1", [response.body.document.id]);
+        expect(document.content_type).toBe("image/png");
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    test("2f. Invalid content with a JPEG extension is rejected", async () => {
+        const before = await countRows("documents");
+
+        const response = await agents.owner
+            .post("/api/documents")
+            .field("name", "Disguised JPEG")
+            .attach("file", SPOOFED_MALICIOUS_BUFFER, "photo.jpg");
+
+        expect(response.status).toBe(415);
+        expect(response.body.message).toMatch(/PDF, JPEG, and PNG/i);
+        expect(await countRows("documents")).toBe(before);
     });
 
     // ══════════════════════════════════════════════════════════════════════

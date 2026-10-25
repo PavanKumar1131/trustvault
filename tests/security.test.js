@@ -31,6 +31,8 @@ const {
     fetchAuditLogs
 } = require("./helpers");
 
+const REASON = "Operational access change approved by an administrator.";
+
 describe("TrustVault security suite", () => {
     const testRunId = Date.now().toString(36);
     const password = TEST_PASSWORD;
@@ -216,7 +218,7 @@ describe("TrustVault security suite", () => {
 
         const disableRes = await agents.adminE
             .patch(`/api/admin/users/${users.disableTarget.id}/disable`)
-            .send({ disabled: true });
+            .send({ disabled: true, reason: REASON });
         expect(disableRes.status).toBe(200);
         expect(disableRes.body.revokedSessions).toBeGreaterThan(0);
 
@@ -248,7 +250,7 @@ describe("TrustVault security suite", () => {
         // Re-enable for the remaining tests.
         const enableRes = await agents.adminE
             .patch(`/api/admin/users/${users.disableTarget.id}/disable`)
-            .send({ disabled: false });
+            .send({ disabled: false, reason: REASON });
         expect(enableRes.status).toBe(200);
 
         // Re-enabling must NOT resurrect the old session.
@@ -580,78 +582,78 @@ describe("TrustVault security suite", () => {
 
         const adminChange = await agents.adminE
             .patch(`/api/admin/users/${users.viewerC.id}/role`)
-            .send({ role: "viewer" });
+            .send({ role: "document_owner", reason: REASON });
         expect(adminChange.status).toBe(200);
 
         // Database state: the role was persisted and the change was audited.
-        const account = await fetchRow("users", "id = $1", [users.viewerC.id]);
-        expect(account.role).toBe("viewer");
+        let account = await fetchRow("users", "id = $1", [users.viewerC.id]);
+        expect(account.role).toBe("document_owner");
 
         const audit = await fetchAuditLogs({ action: "admin_user_role_change", outcome: "success" });
-        expect(audit.length).toBeGreaterThan(0);
-        expect(audit[0].details.previousRole).toBeDefined();
-        expect(audit[0].details.newRole).toBe("viewer");
+        const promotion = audit.find(
+            (row) =>
+                row.target_user_id === users.viewerC.id &&
+                row.details.newRole === "document_owner"
+        );
+        expect(promotion).toBeTruthy();
+        expect(promotion.details.previousRole).toBe("viewer");
+        expect(promotion.details.reason).toBe(REASON);
+
+        // Restore the Viewer role for the remaining tests.
+        const demote = await agents.adminE
+            .patch(`/api/admin/users/${users.viewerC.id}/role`)
+            .send({ role: "viewer", reason: REASON });
+        expect(demote.status).toBe(200);
+        account = await fetchRow("users", "id = $1", [users.viewerC.id]);
+        expect(account.role).toBe("viewer");
     });
 
     // ══════════════════════════════════════════════════════════════════════
-    test("17. The last active administrator cannot be demoted or disabled", async () => {
-        // Reduce the number of active administrators to one (adminE).
+    test("17. Administrator accounts are protected from demotion and disable", async () => {
         const disableG = await agents.adminE
             .patch(`/api/admin/users/${users.adminG.id}/disable`)
-            .send({ disabled: true });
-        expect(disableG.status).toBe(200);
+            .send({ disabled: true, reason: REASON });
+        expect(disableG.status).toBe(409);
+        expect(disableG.body.message).toMatch(/administrator accounts cannot/i);
 
         const disableF = await agents.adminE
             .patch(`/api/admin/users/${users.adminF.id}/disable`)
-            .send({ disabled: true });
-        expect(disableF.status).toBe(200);
+            .send({ disabled: true, reason: REASON });
+        expect(disableF.status).toBe(409);
 
-        const activeAdmins = await countRows(
-            "users", "role = 'admin' AND is_disabled = false"
-        );
-        expect(activeAdmins).toBe(1);
-
-        // Demoting the only remaining active administrator must be refused.
-        const demote = await agents.adminE
+        // Admin accounts cannot be demoted either, even when several are active.
+        const demoteG = await agents.adminE
             .patch(`/api/admin/users/${users.adminG.id}/role`)
-            .send({ role: "viewer" });
-        expect(demote.status).toBe(409);
-        expect(demote.body.message).toMatch(/last active administrator/i);
+            .send({ role: "viewer", reason: REASON });
+        expect(demoteG.status).toBe(409);
+        expect(demoteG.body.message).toMatch(/administrator accounts cannot/i);
 
-        const disable = await agents.adminE
-            .patch(`/api/admin/users/${users.adminF.id}/disable`)
-            .send({ disabled: true });
-        expect(disable.status).toBe(409);
+        const demoteF = await agents.adminE
+            .patch(`/api/admin/users/${users.adminF.id}/role`)
+            .send({ role: "viewer", reason: REASON });
+        expect(demoteF.status).toBe(409);
 
         // Self-modification is refused as well.
         const selfDemote = await agents.adminE
             .patch(`/api/admin/users/${users.adminE.id}/role`)
-            .send({ role: "viewer" });
+            .send({ role: "viewer", reason: REASON });
         expect(selfDemote.status).toBe(400);
 
         const selfDisable = await agents.adminE
             .patch(`/api/admin/users/${users.adminE.id}/disable`)
-            .send({ disabled: true });
+            .send({ disabled: true, reason: REASON });
         expect(selfDisable.status).toBe(400);
 
         // Database state: nobody was demoted or disabled.
         for (const adminId of [users.adminE.id, users.adminF.id, users.adminG.id]) {
             const account = await fetchRow("users", "id = $1", [adminId]);
             expect(account.role).toBe("admin");
+            expect(account.is_disabled).toBe(false);
         }
-
-        const adminF = await fetchRow("users", "id = $1", [users.adminF.id]);
-        expect(adminF.is_disabled).toBe(true);
-
-        // Restore a second active administrator for the remaining tests.
-        const enableF = await agents.adminE
-            .patch(`/api/admin/users/${users.adminF.id}/disable`)
-            .send({ disabled: false });
-        expect(enableF.status).toBe(200);
 
         expect(
             await countRows("users", "role = 'admin' AND is_disabled = false")
-        ).toBe(2);
+        ).toBe(3);
     });
 
     // ══════════════════════════════════════════════════════════════════════
@@ -908,6 +910,7 @@ describe("TrustVault security suite", () => {
         const response = await agents.ownerA.delete(`/api/documents/${document.id}`);
         expect(response.status).toBe(200);
         expect(response.body.message).toMatch(/deleted/i);
+        expect(response.body.storageCleanup).toBe("complete");
 
         // Database state: the document and its blob are gone.
         expect(await fetchRow("documents", "id = $1", [document.id])).toBeNull();
@@ -1004,6 +1007,8 @@ describe("TrustVault security suite", () => {
             // upload directory either.
             const removal = await agents.ownerA.delete(`/api/documents/${document.id}`);
             expect(removal.status).toBe(200);
+            expect(removal.body.storageCleanup).toBe("pending");
+            expect(removal.body.message).toMatch(/could not be removed/i);
 
             // The canary is still there.
             await expect(fs.readFile(canaryPath, "utf8")).resolves.toBe(canaryContent);
@@ -1071,14 +1076,7 @@ describe("TrustVault security suite", () => {
     });
 
     // ══════════════════════════════════════════════════════════════════════
-    test("36. Concurrent demotions never leave the system without an administrator", async () => {
-        // A third administrator, so that the demotions can race each other.
-        const adminH = await createUser({
-            name: "Heidi Admin",
-            email: `adminh.${testRunId}@trustvault.test`,
-            role: "admin"
-        });
-
+    test("36. Concurrent attempts to demote administrators are all refused", async () => {
         const loginAs = async (email) => {
             const agent = request.agent(app);
             const response = await agent
@@ -1089,49 +1087,42 @@ describe("TrustVault security suite", () => {
             return agent;
         };
 
-        // Fresh sessions: the accounts were disabled and re-enabled in an
-        // earlier test, and a disable invalidates every session.
         const actorE = await loginAs(emails.adminE);
         const actorF = await loginAs(emails.adminF);
-        const actorH = await loginAs(`adminh.${testRunId}@trustvault.test`);
+        const actorG = await loginAs(emails.adminG);
 
         const before = await countRows("users", "role = 'admin' AND is_disabled = false");
         expect(before).toBe(3);
 
-        // Three administrators demote each other at the same time.
+        // Three administrators try to demote each other at the same time.
         const responses = await Promise.all([
-            actorE.patch(`/api/admin/users/${users.adminF.id}/role`).send({ role: "viewer" }),
-            actorF.patch(`/api/admin/users/${adminH.id}/role`).send({ role: "viewer" }),
-            actorH.patch(`/api/admin/users/${users.adminE.id}/role`).send({ role: "viewer" })
+            actorE
+                .patch(`/api/admin/users/${users.adminF.id}/role`)
+                .send({ role: "viewer", reason: REASON }),
+            actorF
+                .patch(`/api/admin/users/${users.adminG.id}/role`)
+                .send({ role: "viewer", reason: REASON }),
+            actorG
+                .patch(`/api/admin/users/${users.adminE.id}/role`)
+                .send({ role: "viewer", reason: REASON })
         ]);
 
-        // No request may fail with a server error, and the refusals must be
-        // the documented ones (the actor lost the role in the meantime, or
-        // the target was the last active administrator).
+        // Admin targets are protected, so every concurrent attempt is refused.
         for (const response of responses) {
-            expect([200, 403, 409]).toContain(response.status);
+            expect(response.status).toBe(409);
+            expect(response.body.message).toMatch(/administrator accounts cannot/i);
         }
 
-        const successful = responses.filter((response) => response.status === 200).length;
-
-        // Database state: every successful request really changed a role, and
-        // at least one administrator is left.
-        const contenderIds = [users.adminE.id, users.adminF.id, adminH.id];
-        const placeholders = contenderIds.map((_, index) => `$${index + 1}`).join(", ");
-
-        const demoted = await countRows(
-            "users",
-            `id IN (${placeholders}) AND role <> 'admin'`,
-            contenderIds
-        );
-
-        expect(demoted).toBeGreaterThanOrEqual(1);
-        expect(demoted).toBeLessThanOrEqual(successful);
-        expect(demoted).toBeLessThan(3);
+        // Database state: no administrator was demoted and all three remain.
+        const contenderIds = [users.adminE.id, users.adminF.id, users.adminG.id];
+        for (const adminId of contenderIds) {
+            const account = await fetchRow("users", "id = $1", [adminId]);
+            expect(account.role).toBe("admin");
+            expect(account.is_disabled).toBe(false);
+        }
 
         const after = await countRows("users", "role = 'admin' AND is_disabled = false");
-        expect(after).toBe(3 - demoted);
-        expect(after).toBeGreaterThanOrEqual(1);
+        expect(after).toBe(3);
     });
 
     // ══════════════════════════════════════════════════════════════════════

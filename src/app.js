@@ -203,9 +203,10 @@ function createApp(options = {}) {
     // ── Static assets ─────────────────────────────────────────────────────────
     // Only the `public` directory is exposed. Uploaded documents live in the
     // private upload directory and the database blob store and are never
-    // served statically.
+    // served statically. Directory index resolution is disabled so `/` can be
+    // the public landing page rather than the authenticated application.
     const publicDir = path.join(__dirname, "../public");
-    app.use(express.static(publicDir));
+    app.use(express.static(publicDir, { index: false }));
 
     // ── CSRF token vending endpoint ───────────────────────────────────────────
     app.get("/api/auth/csrf-token", (req, res) => {
@@ -276,7 +277,20 @@ function createApp(options = {}) {
         }
     });
 
+    // ── Public landing page and application entry point ───────────────────────
+    // `/` is deliberately public and static: it never loads documents or calls
+    // the API. The existing single-page application, including its sign-in and
+    // registration forms, is served at `/app`. The landing page's actions link
+    // there with the appropriate tab selected.
     app.get("/", (req, res) => {
+        res.sendFile(path.join(publicDir, "landing.html"), (err) => {
+            if (err) {
+                res.send("Welcome to TrustVault API!");
+            }
+        });
+    });
+
+    app.get("/app", (req, res) => {
         res.sendFile(path.join(publicDir, "index.html"), (err) => {
             if (err) {
                 res.send("Welcome to TrustVault API!");

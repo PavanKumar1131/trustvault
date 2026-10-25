@@ -26,6 +26,8 @@ const {
 } = require("./helpers");
 
 const ADMIN_LIST = "/api/admin/role-upgrade-requests";
+const DECISION_REASON =
+    "Approved after reviewing the submitted business need.";
 
 function statusOf(agent) {
     return agent.get("/api/auth/role-upgrade-request");
@@ -35,10 +37,10 @@ function submitRequest(agent, body) {
     return agent.post("/api/auth/role-upgrade-request").send(body || {});
 }
 
-function approve(agent, requestId) {
-    return agent.post(
-        `${ADMIN_LIST}/${encodeURIComponent(requestId)}/approve`
-    );
+function approve(agent, requestId, decisionNote = DECISION_REASON) {
+    return agent
+        .post(`${ADMIN_LIST}/${encodeURIComponent(requestId)}/approve`)
+        .send({ decisionNote });
 }
 
 function reject(agent, requestId) {
@@ -785,55 +787,39 @@ describe("Viewer → Document Owner role upgrade", () => {
         });
         expect(submitted.status).toBe(201);
 
-        // The same-role change (viewer → viewer) rejects the pending request.
+        // A same-role change is refused and leaves the pending request alone.
         const sameRole = await agents.admin
             .patch(`/api/admin/users/${users.direct.id}/role`)
-            .send({ role: "viewer" });
-        expect(sameRole.status).toBe(200);
-        expect(sameRole.body.user.role).toBe("viewer");
-        expect(sameRole.body.request).toMatchObject({
-            id: submitted.body.request.id,
-            status: "rejected"
-        });
+            .send({ role: "viewer", reason: DECISION_REASON });
+        expect(sameRole.status).toBe(409);
 
-        const rejectedRow = await fetchRow(
+        const stillPending = await fetchRow(
             "requests",
             "id = $1",
             [submitted.body.request.id]
         );
-        expect(rejectedRow.status).toBe("rejected");
-        expect(rejectedRow.decided_by).toBe(users.admin.id);
+        expect(stillPending.status).toBe("pending");
+        expect(stillPending.decided_by).toBeNull();
 
-        // A new request can be promoted directly to Document Owner.
-        await pool.query(
-            `UPDATE requests
-             SET decided_at = NOW() - INTERVAL '8 days'
-             WHERE id = $1`,
-            [submitted.body.request.id]
-        );
-
-        const second = await submitRequest(agents.direct, {
-            justification: "Promote directly, second attempt"
-        });
-        expect(second.status).toBe(201);
-
+        // A direct promotion settles the pending request atomically.
         const promoted = await agents.admin
             .patch(`/api/admin/users/${users.direct.id}/role`)
-            .send({ role: "document_owner" });
+            .send({ role: "document_owner", reason: DECISION_REASON });
         expect(promoted.status).toBe(200);
         expect(promoted.body.user.role).toBe("document_owner");
         expect(promoted.body.request).toMatchObject({
-            id: second.body.request.id,
+            id: submitted.body.request.id,
             status: "approved"
         });
 
         const approvedRow = await fetchRow(
             "requests",
             "id = $1",
-            [second.body.request.id]
+            [submitted.body.request.id]
         );
         expect(approvedRow.status).toBe("approved");
         expect(approvedRow.decided_by).toBe(users.admin.id);
+        expect(approvedRow.decision_note).toBe(DECISION_REASON);
 
         // Both the role-change audit and the request decision audit exist.
         const roleChange = await fetchAuditLogs({
@@ -843,7 +829,7 @@ describe("Viewer → Document Owner role upgrade", () => {
             (row) =>
                 row.outcome === "success" &&
                 row.target_user_id === users.direct.id &&
-                row.details.pendingRequestId === second.body.request.id
+                row.details.pendingRequestId === submitted.body.request.id
         );
         expect(directChange).toBeTruthy();
         expect(directChange.details.previousRole).toBe("viewer");
@@ -856,7 +842,7 @@ describe("Viewer → Document Owner role upgrade", () => {
         const viaDirect = decisionLog.find(
             (row) =>
                 row.outcome === "success" &&
-                row.details.requestId === second.body.request.id
+                row.details.requestId === submitted.body.request.id
         );
         expect(viaDirect).toBeTruthy();
         expect(viaDirect.details.viaDirectRoleChange).toBe(true);
@@ -881,7 +867,7 @@ describe("Viewer → Document Owner role upgrade", () => {
         try {
             const response = await agents.admin
                 .patch(`/api/admin/users/${created.user.id}/role`)
-                .send({ role: "document_owner" });
+                .send({ role: "document_owner", reason: DECISION_REASON });
             expect(response.status).toBe(500);
 
             const userRow = await fetchRow("users", "id = $1", [
@@ -1007,7 +993,9 @@ describe("Viewer → Document Owner role upgrade", () => {
         const id = submitted.body.request.id;
 
         const results = await Promise.all([
-            agents.admin.post(`/api/admin/requests/${id}/approve`),
+            agents.admin
+                .post(`/api/admin/requests/${id}/approve`)
+                .send({ decisionNote: DECISION_REASON }),
             agents.admin.post(`/api/admin/requests/${id}/reject`).send({ decisionNote: "Optional note" }),
             created.agent.post(`/api/requests/${id}/cancel`)
         ]);

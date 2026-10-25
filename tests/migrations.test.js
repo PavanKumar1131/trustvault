@@ -14,6 +14,12 @@ const { Pool } = require("pg");
 const config = require("../src/config");
 const { migrate, SCHEMA_PATH } = require("../src/scripts/migrate");
 const { SOURCE: SCHEMA_SOURCE, TARGET: SCHEMA_TARGET } = require("../src/scripts/sync-schema");
+const { assertSafeTestDatabase } = require("./testDatabaseGuard");
+
+// The migration probe is a temporary derivative of the guarded test database.
+// Refuse to create or drop it unless the base target is the loopback
+// `trustvault_test` database.
+assertSafeTestDatabase();
 
 const PROBE_DATABASE = "trustvault_test_migration_probe";
 

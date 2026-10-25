@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en" class="landing-html">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="TrustVault — private document storage, controlled sharing, and a hash-chained audit history.">
+    <title>TrustVault — Your documents, protected and provable</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/styles.css?v=4.1">
+    <link rel="stylesheet" href="/css/landing.css?v=1.0">
+</head>
+<body class="landing-body" id="landing-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+        <div class="lv-container site-header-inner">
+            <a class="brand" href="#overview" aria-label="TrustVault overview">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                </span>
+                <span class="brand-text">
+                    <span class="brand-name">TrustVault</span>
+                    <span class="brand-tagline">Secure document management</span>
+                </span>
+            </a>
+
+            <nav class="site-nav" aria-label="Landing page sections">
+                <a href="#overview">Overview</a>
+                <a href="#features">Features</a>
+                <a href="#how-it-works">How it works</a>
+                <a href="#integrity">Integrity</a>
+                <a href="#architecture">Architecture</a>
+            </nav>
+
+            <div class="site-actions">
+                <a class="header-signin" href="/app?mode=login">Sign in</a>
+                <a class="lv-btn lv-btn-primary lv-btn-header" href="/app?mode=register">Get started</a>
+            </div>
+
+            <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav" aria-label="Open navigation">
+                <svg class="nav-toggle-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                    <path d="M4 7h16"/>
+                    <path d="M4 12h16"/>
+                    <path d="M4 17h16"/>
+                </svg>
+                <svg class="nav-toggle-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                    <path d="m6 6 12 12"/>
+                    <path d="m18 6-12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="mobile-nav" id="mobile-nav" hidden>
+            <nav aria-label="Mobile landing page sections">
+                <a href="#overview">Overview</a>
+                <a href="#features">Features</a>
+                <a href="#how-it-works">How it works</a>
+                <a href="#integrity">Integrity</a>
+                <a href="#architecture">Architecture</a>
+            </nav>
+            <div class="mobile-nav-actions">
+                <a class="lv-btn lv-btn-dark" href="/app?mode=login">Sign in</a>
+                <a class="lv-btn lv-btn-primary" href="/app?mode=register">Get started</a>
+            </div>
+        </div>
+    </header>
+
+    <main id="main">
+        <section class="hero" id="overview" aria-labelledby="hero-title">
+            <div class="lv-container hero-inner">
+                <div class="hero-copy">
+                    <p class="eyebrow eyebrow-mint">
+                        <span class="eyebrow-dot" aria-hidden="true"></span>
+                        Secure document management
+                    </p>
+                    <h1 id="hero-title">Your documents,<br><em>protected</em> and<br>provable.</h1>
+                    <p class="hero-lead">Store files privately, share them with control, and keep a tamper-evident record of every important action.</p>
+                    <div class="hero-actions">
+                        <a class="lv-btn lv-btn-primary" href="/app?mode=register">
+                            Create account
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M5 12h14"/>
+                                <path d="m13 6 6 6-6 6"/>
+                            </svg>
+                        </a>
+                        <a class="lv-btn lv-btn-outline" href="/app?mode=login">Sign in</a>
+                    </div>
+                    <p class="hero-meta">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m5 12 4 4L19 6"/>
+                        </svg>
+                        <span>New accounts start as Viewer. An administrator can grant Document Owner access.</span>
+                    </p>
+                </div>
+
+                <div class="hero-visual">
+                    <div class="audit-card" role="group" aria-labelledby="audit-card-title">
+                        <div class="audit-card-head">
+                            <p class="eyebrow eyebrow-mint" id="audit-card-title">Audit activity</p>
+                            <span class="sample-badge">Illustrative</span>
+                        </div>
+
+                        <ol class="audit-events">
+                            <li>
+                                <span class="audit-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M12 16V4"/>
+                                        <path d="m7 9 5-5 5 5"/>
+                                        <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+                                    </svg>
+                                </span>
+                                <div>
+                                    <p class="audit-title">Document uploaded</p>
+                                    <p class="audit-meta">Validated on the server before storage</p>
+                                </div>
+                            </li>
+                            <li>
+                                <span class="audit-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                                        <circle cx="9" cy="7" r="4"/>
+                                        <path d="m16 11 2 2 4-4"/>
+                                    </svg>
+                                </span>
+                                <div>
+                                    <p class="audit-title">Read access granted</p>
+                                    <p class="audit-meta">Scoped to one account and one document</p>
+                                </div>
+                            </li>
+                            <li>
+                                <span class="audit-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/>
+                                        <path d="m9.5 9.5 5 5"/>
+                                        <path d="m14.5 9.5-5 5"/>
+                                    </svg>
+                                </span>
+                                <div>
+                                    <p class="audit-title">Edit attempt refused</p>
+                                    <p class="audit-meta">The refusal is recorded in the audit log</p>
+                                </div>
+                            </li>
+                        </ol>
+
+                        <div class="audit-card-foot">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1"/>
+                                <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1"/>
+                            </svg>
+                            <p>Hash-linked entries. Each event includes the previous entry's hash.</p>
+                        </div>
+                        <p class="sample-note">Illustrative example — not live audit data.</p>
+                    </div>
+
+                    <div class="hero-float" aria-hidden="true">
+                        <span class="hero-float-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/>
+                                <path d="m9 12 2 2 4-4"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <strong>Server-checked access</strong>
+                            <span>Authorization is evaluated on every request.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="principles" aria-labelledby="principles-title">
+            <div class="lv-container">
+                <div class="principles-intro">
+                    <div>
+                        <p class="eyebrow">The TrustVault approach</p>
+                        <h2 id="principles-title">Private storage. Explicit access. A record you can examine.</h2>
+                    </div>
+                    <p>Three principles shape every request, from an upload to a refused edit.</p>
+                </div>
+
+                <div class="principles-grid">
+                    <article class="principle">
+                        <p class="principle-number" aria-hidden="true">01</p>
+                        <h3>Private by default</h3>
+                        <p>A document is visible to its owner and to the accounts the owner explicitly grants. Administrators do not receive implicit access to document contents.</p>
+                    </article>
+                    <article class="principle">
+                        <p class="principle-number" aria-hidden="true">02</p>
+                        <h3>Permissioned access</h3>
+                        <p>Owners choose Read or Edit for each person. The server checks the current grant on every request, so a revoked permission stops working on the next request.</p>
+                    </article>
+                    <article class="principle">
+                        <p class="principle-number" aria-hidden="true">03</p>
+                        <h3>Provable activity</h3>
+                        <p>Important operations are recorded in a hash-chained audit log. A change to recorded history breaks the chain and can be detected.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section class="product" id="product" aria-labelledby="product-title">
+            <div class="lv-container">
+                <div class="section-head center">
+                    <p class="eyebrow eyebrow-center">The product</p>
+                    <h2 id="product-title">Your whole vault, one clear view.</h2>
+                    <p>A responsive workspace for documents, sharing, search, and audit review. The preview below is static and illustrative.</p>
+                </div>
+
+                <div class="product-stage">
+                    <div class="product-frame" aria-hidden="true">
+                        <div class="product-chrome">
+                            <span class="chrome-dot"></span>
+                            <span class="chrome-dot"></span>
+                            <span class="chrome-dot"></span>
+                            <span class="product-url">trustvault / app</span>
+                        </div>
+
+                        <div class="product-app">
+                            <aside class="mock-sidebar">
+                                <div class="mock-brand">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                    </svg>
+                                    <span>TrustVault</span>
+                                </div>
+                                <div class="mock-nav">
+                                    <span class="mock-nav-item">Dashboard</span>
+                                    <span class="mock-nav-item active">My documents</span>
+                                    <span class="mock-nav-item">Shared with me</span>
+                                    <span class="mock-nav-item">Upload</span>
+                                    <span class="mock-nav-item">Search</span>
+                                </div>
+                                <p class="mock-nav-label">Admin only</p>
+                                <div class="mock-nav">
+                                    <span class="mock-nav-item">Audit log</span>
+                                    <span class="mock-nav-item">Users</span>
+                                    <span class="mock-nav-item">Requests</span>
+                                </div>
+                                <p class="mock-sidebar-note">Illustrative preview</p>
+                            </aside>
+
+                            <div class="mock-main">
+                                <div class="mock-topline">
+                                    <div>
+                                        <p class="mock-title">My documents</p>
+                                        <p class="mock-sub">Documents you own. Only you can edit, share or delete them.</p>
+                                    </div>
+                                    <span class="mock-btn">+ Upload document</span>
+                                </div>
+
+                                <div class="mock-toolbar">
+                                    <span class="mock-search">Search by name</span>
+                                    <span class="mock-select">All categories</span>
+                                </div>
+
+                                <div class="mock-table">
+                                    <div class="mock-table-head">
+                                        <span>Name</span>
+                                        <span>Category</span>
+                                        <span>Size</span>
+                                        <span class="mock-col-format">Format</span>
+                                    </div>
+                                    <div class="mock-row">
+                                        <span class="mock-file">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+                                                <path d="M14 2v6h6"/>
+                                            </svg>
+                                            <span>Project brief.pdf</span>
+                                        </span>
+                                        <span class="mock-cat">Projects</span>
+                                        <span class="mock-size">1.4 MB</span>
+                                        <span class="mock-col-format"><span class="mock-format">PDF</span></span>
+                                    </div>
+                                    <div class="mock-row">
+                                        <span class="mock-file">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+                                                <path d="M14 2v6h6"/>
+                                            </svg>
+                                            <span>Budget plan.pdf</span>
+                                        </span>
+                                        <span class="mock-cat">Finance</span>
+                                        <span class="mock-size">820 KB</span>
+                                        <span class="mock-col-format"><span class="mock-format">PDF</span></span>
+                                    </div>
+                                    <div class="mock-row">
+                                        <span class="mock-file">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+                                                <path d="M14 2v6h6"/>
+                                            </svg>
+                                            <span>Design notes.png</span>
+                                        </span>
+                                        <span class="mock-cat">Design</span>
+                                        <span class="mock-size">640 KB</span>
+                                        <span class="mock-col-format"><span class="mock-format">PNG</span></span>
+                                    </div>
+                                    <div class="mock-row">
+                                        <span class="mock-file">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+                                                <path d="M14 2v6h6"/>
+                                            </svg>
+                                            <span>Team handbook.pdf</span>
+                                        </span>
+                                        <span class="mock-cat">General</span>
+                                        <span class="mock-size">2.1 MB</span>
+                                        <span class="mock-col-format"><span class="mock-format">PDF</span></span>
+                                    </div>
+                                </div>
+
+                                <p class="mock-footnote">Sample content only — no live documents are shown.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <aside class="product-phone" aria-hidden="true">
+                        <div class="phone-screen">
+                            <div class="phone-top">
+                                <span>My documents</span>
+                                <span class="phone-btn">+ Upload</span>
+                            </div>
+                            <div class="phone-card">
+                                <p class="phone-name">Project brief.pdf</p>
+                                <p class="phone-meta">1.4 MB · Projects</p>
+                            </div>
+                            <div class="phone-card">
+                                <p class="phone-name">Budget plan.pdf</p>
+                                <p class="phone-meta">820 KB · Finance</p>
+                            </div>
+                            <div class="phone-card">
+                                <p class="phone-name">Design notes.png</p>
+                                <p class="phone-meta">640 KB · Design</p>
+                            </div>
+                            <p class="phone-badge">Sample preview</p>
+                        </div>
+                    </aside>
+                </div>
+
+                <p class="product-caption">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9"/>
+                        <path d="M12 11v5"/>
+                        <path d="M12 8h.01"/>
+                    </svg>
+                    Illustrative product preview. Sample names and values are not live application data.
+                </p>
+            </div>
+        </section>
+
+        <section class="features" id="features" aria-labelledby="features-title">
+            <div class="lv-container features-grid">
+                <div class="features-intro">
+                    <p class="eyebrow">Features</p>
+                    <h2 id="features-title">Everything you need for controlled document work.</h2>
+                    <p>Only capabilities implemented in the application are described here.</p>
+                    <div class="features-note">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/>
+                            <path d="m9 12 2 2 4-4"/>
+                        </svg>
+                        <p><strong>No anonymous document access.</strong> The public preview is static. Your documents are never loaded for visitors who are not signed in.</p>
+                    </div>
+                </div>
+
+                <ul class="feature-list">
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Secure authentication</h3>
+                            <p>Passwords are hashed with bcrypt. Sessions are server-side, HttpOnly, and re-checked against the account on every request.</p>
+                        </div>
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Three enforced roles</h3>
+                            <p>Admin, Document Owner, and Viewer permissions are evaluated by the API, not by the browser.</p>
+                        </div>
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+                                <path d="M14 2v6h6"/>
+                                <path d="m9 15 2 2 4-4"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Server-side file validation</h3>
+                            <p>PDF, JPEG, and PNG content is verified by magic bytes and capped at 5 MiB.</p>
+                        </div>
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="7"/>
+                                <path d="m20 20-3.5-3.5"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Search and filtering</h3>
+                            <p>Find documents by name, description, owner, category, or created date — always inside your access.</p>
+                        </div>
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="7.5" cy="15.5" r="4.5"/>
+                                <path d="m10.5 12.5 7-7"/>
+                                <path d="m15 5 4 4"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Read and Edit grants</h3>
+                            <p>Access is granted per document and per account, with no broad public links.</p>
+                        </div>
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="18" cy="5" r="3"/>
+                                <circle cx="6" cy="12" r="3"/>
+                                <circle cx="18" cy="19" r="3"/>
+                                <path d="m8.6 10.5 6.8-4"/>
+                                <path d="m8.6 13.5 6.8 4"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Sharing and revocation</h3>
+                            <p>Owners can grant or revoke access; the next request uses the current permission state.</p>
+                        </div>
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="m17 8 5 5"/>
+                                <path d="m22 8-5 5"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Account disabling</h3>
+                            <p>Administrators can disable an account and invalidate its active sessions.</p>
+                        </div>
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M10 3 8 21"/>
+                                <path d="M16 3l-2 18"/>
+                                <path d="M4 9h16"/>
+                                <path d="M3 15h16"/>
+                            </svg>
+                        </span>
+                        <div>
+                            <h3>Audit events and verification</h3>
+                            <p>Important operations enter a SHA-256 hash chain. Administrators can verify integrity from the Audit log.</p>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="steps" id="how-it-works" aria-labelledby="steps-title">
+            <div class="lv-container">
+                <div class="section-head">
+                    <p class="eyebrow">How it works</p>
+                    <h2 id="steps-title">Simple, secure, and transparent.</h2>
+                    <p>Three steps from a private file to a reviewable access history.</p>
+                </div>
+
+                <div class="steps-grid">
+                    <article class="step">
+                        <p class="step-label">Step 01</p>
+                        <h3>Upload a document</h3>
+                        <p>A Document Owner adds a PDF, JPEG, or PNG. The server validates the content before it is stored.</p>
+                    </article>
+                    <article class="step">
+                        <p class="step-label">Step 02</p>
+                        <h3>Grant specific access</h3>
+                        <p>Choose an account and a Read or Edit grant. Access stays scoped to that person and document.</p>
+                    </article>
+                    <article class="step">
+                        <p class="step-label">Step 03</p>
+                        <h3>Review and verify</h3>
+                        <p>Follow important actions in the Audit log and verify the hash chain from the Admin console.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section class="integrity" id="integrity" aria-labelledby="integrity-title">
+            <div class="lv-container integrity-grid">
+                <div>
+                    <p class="eyebrow">Integrity</p>
+                    <h2 id="integrity-title">A recorded history you can examine.</h2>
+                    <p class="integrity-lead">TrustVault writes important operations to a hash-chained audit log. Each entry includes a hash of the previous entry, so a change to recorded history breaks the chain and can be detected.</p>
+
+                    <ul class="integrity-list">
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="m5 12 4 4L19 6"/>
+                            </svg>
+                            <span>Uploads, grants, revocations, refusals, and account changes are recorded.</span>
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="m5 12 4 4L19 6"/>
+                            </svg>
+                            <span>SHA-256 hash chain over audit events.</span>
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="m5 12 4 4L19 6"/>
+                            </svg>
+                            <span>Administrators can verify the current chain from the Audit log.</span>
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="m5 12 4 4L19 6"/>
+                            </svg>
+                            <span>Deleting a document does not rewrite older audit entries.</span>
+                        </li>
+                    </ul>
+
+                    <p class="integrity-caveat"><strong>Tamper-evident, not tamper-proof.</strong> A database administrator with enough access could rewrite records and recompute hashes. The chain makes undetected changes harder, not impossible.</p>
+                </div>
+
+                <div class="chain-card" role="group" aria-labelledby="chain-title">
+                    <div class="chain-head">
+                        <p class="chain-title" id="chain-title">Illustrative audit chain</p>
+                        <span class="sample-badge">Example</span>
+                    </div>
+
+                    <ol class="chain-list">
+                        <li class="chain-entry">
+                            <span class="chain-index" aria-hidden="true">01</span>
+                            <div>
+                                <h3>Document uploaded</h3>
+                                <p>Event recorded</p>
+                            </div>
+                        </li>
+                        <li class="chain-link" aria-hidden="true">Hash of previous entry</li>
+                        <li class="chain-entry">
+                            <span class="chain-index" aria-hidden="true">02</span>
+                            <div>
+                                <h3>Read access granted</h3>
+                                <p>New entry links to the prior hash</p>
+                            </div>
+                        </li>
+                        <li class="chain-link" aria-hidden="true">Hash of previous entry</li>
+                        <li class="chain-entry">
+                            <span class="chain-index" aria-hidden="true">03</span>
+                            <div>
+                                <h3>Edit attempt refused</h3>
+                                <p>Refusal recorded</p>
+                            </div>
+                        </li>
+                    </ol>
+
+                    <div class="chain-foot">
+                        <p>No live verification result or timestamp is shown here.</p>
+                        <a href="/app?mode=login">
+                            Sign in to review the Audit log
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M5 12h14"/>
+                                <path d="m13 6 6 6-6 6"/>
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="architecture" id="architecture" aria-labelledby="architecture-title">
+            <div class="lv-container">
+                <div class="arch-head">
+                    <p class="eyebrow">Architecture</p>
+                    <h2 id="architecture-title">A small, inspectable stack.</h2>
+                    <p>Built with the technologies already running TrustVault: the browser, the Express application, and PostgreSQL.</p>
+                </div>
+
+                <div class="arch-grid">
+                    <article class="arch-card">
+                        <p class="arch-tag">Client</p>
+                        <h3>Browser</h3>
+                        <p>Static HTML, CSS, and vanilla JavaScript. Same-origin calls to the application API.</p>
+                    </article>
+                    <div class="arch-connector" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12h14"/>
+                            <path d="m13 6 6 6-6 6"/>
+                        </svg>
+                    </div>
+                    <article class="arch-card">
+                        <p class="arch-tag">Server</p>
+                        <h3>Express application</h3>
+                        <p>Authentication, authorization, document handling, and audit writing on Node.js.</p>
+                    </article>
+                    <div class="arch-connector" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12h14"/>
+                            <path d="m13 6 6 6-6 6"/>
+                        </svg>
+                    </div>
+                    <article class="arch-card">
+                        <p class="arch-tag">Data</p>
+                        <h3>PostgreSQL</h3>
+                        <p>Users, sessions, documents, permissions, audit records, and document blobs, with a local write-through file cache.</p>
+                    </article>
+                </div>
+
+                <div class="arch-tags" aria-label="Technologies used">
+                    <span class="arch-tag-pill">Node.js</span>
+                    <span class="arch-tag-pill">Express 5</span>
+                    <span class="arch-tag-pill">PostgreSQL</span>
+                    <span class="arch-tag-pill">Vanilla JavaScript</span>
+                    <span class="arch-tag-pill">bcrypt</span>
+                    <span class="arch-tag-pill">Helmet</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="cta" aria-labelledby="cta-title">
+            <div class="lv-container cta-inner">
+                <p class="eyebrow eyebrow-mint eyebrow-center">Get started</p>
+                <h2 id="cta-title">Start with a private vault.</h2>
+                <p>Create a Viewer account, then work with an administrator to unlock Document Owner tools.</p>
+                <div class="cta-actions">
+                    <a class="lv-btn lv-btn-primary" href="/app?mode=register">
+                        Create account
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M5 12h14"/>
+                            <path d="m13 6 6 6-6 6"/>
+                        </svg>
+                    </a>
+                    <a class="lv-btn lv-btn-outline" href="/app?mode=login">Sign in</a>
+                </div>
+                <p class="cta-note">Already have an account? <a href="/app">Open TrustVault</a>.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="lv-container">
+            <div class="footer-inner">
+                <a class="footer-brand" href="#overview">
+                    <span class="brand-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                    </span>
+                    <span>TrustVault</span>
+                </a>
+
+                <nav class="footer-nav" aria-label="Footer">
+                    <a href="#overview">Overview</a>
+                    <a href="#features">Features</a>
+                    <a href="#how-it-works">How it works</a>
+                    <a href="#integrity">Integrity</a>
+                    <a href="#architecture">Architecture</a>
+                </nav>
+            </div>
+
+            <div class="footer-meta">
+                <p>TrustVault · Secure document management</p>
+                <p>Private storage, controlled sharing, and a hash-chained audit history.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/js/landing.js"></script>
+</body>
+</html>

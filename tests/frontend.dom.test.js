@@ -93,17 +93,22 @@ function createApiStub(handler) {
     };
 }
 
+/** JSDOM windows created by the current test, closed again after it finishes. */
+const liveDoms = [];
+
 /**
  * Boots the application inside a fresh JSDOM window.
  *
  * @param {(method: string, url: string, body: any) => {status?: number, body?: any}} handler
  */
-function boot(handler) {
+function boot(handler, url = "https://trustvault.test/") {
     const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
-        url: "https://trustvault.test/",
+        url,
         runScripts: "outside-only",
         pretendToBeVisual: true
     });
+
+    liveDoms.push(dom);
 
     const { window } = dom;
 
@@ -118,6 +123,17 @@ function boot(handler) {
 
     return { dom, window, document: window.document };
 }
+
+afterEach(() => {
+    while (liveDoms.length > 0) {
+        const dom = liveDoms.pop();
+        try {
+            dom.window.close();
+        } catch {
+            // The window was already closed by the test itself.
+        }
+    }
+});
 
 /** Lets the pending promises inside the controller settle. */
 function flush(window, times = 4) {
@@ -340,6 +356,15 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             if (!approve) throw new Error(JSON.stringify({ tbody: document.getElementById("admin-requests-tbody").textContent, error: document.getElementById("admin-requests-error").textContent, calls: window.API.calls.map((call) => call.url) }));
             approve.click();
             await flush(window);
+
+            const form = document.querySelector("#admin-requests-tbody .request-approve-form");
+            if (!form) throw new Error("Approval reason editor did not open");
+            form.querySelector("textarea").value =
+                "Approved after reviewing the submitted business need.";
+            form.dispatchEvent(
+                new window.Event("submit", { bubbles: true, cancelable: true })
+            );
+            await flush(window);
         }
 
         it("uses the backend-confirmed role before announcing an approval", async () => {
@@ -356,7 +381,15 @@ describe("TrustVault Frontend: DOM behaviour", () => {
 
             const toastText = document.getElementById("toast-container").textContent;
             expect(toastText).toContain("Request approved.");
-            expect(window.API.calls.some((call) => call.url.startsWith("/api/admin/requests/") && call.method === "POST")).toBe(true);
+            const approvalCall = window.API.calls.find(
+                (call) =>
+                    call.url.startsWith("/api/admin/requests/") &&
+                    call.method === "POST"
+            );
+            expect(approvalCall).toBeTruthy();
+            expect(approvalCall.body).toEqual({
+                decisionNote: "Approved after reviewing the submitted business need."
+            });
         });
 
         it("does not display a decision outcome when the backend operation fails", async () => {
@@ -449,6 +482,40 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             const call = window.API.calls.find((entry) => entry.method === "POST" && entry.url === "/api/requests");
             expect(call.body).toEqual({ requestType: "document_owner_upgrade", reason: "Need to manage my documents" });
             expect(document.getElementById("my-requests-tbody").textContent).toContain("Pending");
+        });
+    });
+
+    // ── Landing entry point ───────────────────────────────────────────────────
+
+    describe("1c. Landing entry point", () => {
+        it("opens the registration form when /app is entered with mode=register", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return {
+                        status: 401,
+                        body: { message: "Authentication required" }
+                    };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(
+                handler,
+                "https://trustvault.test/app?mode=register"
+            );
+            await flush(window);
+
+            expect(
+                document.getElementById("register-form").classList.contains("hidden")
+            ).toBe(false);
+            expect(
+                document.getElementById("login-form").classList.contains("hidden")
+            ).toBe(true);
+            expect(
+                document
+                    .getElementById("auth-tab-register")
+                    .getAttribute("aria-selected")
+            ).toBe("true");
         });
     });
 
@@ -1082,6 +1149,158 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             expect(call.url).toContain("to=2026-02-01");
         });
 
+        it("searches by category alone without a text term", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.viewer } };
+                }
+                if (url.startsWith("/api/documents/filters")) {
+                    return { status: 200, body: FILTERS };
+                }
+                if (url.startsWith("/api/documents?")) {
+                    return { status: 200, body: { documents: [], page: 1, limit: 20, count: 0 } };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(handler);
+            await flush(window);
+
+            window.API.calls.length = 0;
+            document.getElementById("search-category-filter").value = "Finance";
+            document.getElementById("btn-search").click();
+            await flush(window);
+
+            const call = window.API.calls.find((entry) =>
+                entry.url.startsWith("/api/documents?")
+            );
+
+            expect(call).toBeTruthy();
+            expect(call.url).toContain("category=Finance");
+            expect(call.url).not.toContain("q=");
+        });
+
+        it("searches by owner alone without a text term", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.viewer } };
+                }
+                if (url.startsWith("/api/documents/filters")) {
+                    return { status: 200, body: FILTERS };
+                }
+                if (url.startsWith("/api/documents?")) {
+                    return { status: 200, body: { documents: [], page: 1, limit: 20, count: 0 } };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(handler);
+            await flush(window);
+
+            window.API.calls.length = 0;
+            document.getElementById("search-owner-filter").value = "alice@example.com";
+            document.getElementById("btn-search").click();
+            await flush(window);
+
+            const call = window.API.calls.find((entry) =>
+                entry.url.startsWith("/api/documents?")
+            );
+
+            expect(call).toBeTruthy();
+            expect(call.url).toContain("owner=alice%40example.com");
+            expect(call.url).not.toContain("q=");
+        });
+
+        it("searches by date alone without a text term", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.viewer } };
+                }
+                if (url.startsWith("/api/documents/filters")) {
+                    return { status: 200, body: FILTERS };
+                }
+                if (url.startsWith("/api/documents?")) {
+                    return { status: 200, body: { documents: [], page: 1, limit: 20, count: 0 } };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(handler);
+            await flush(window);
+
+            window.API.calls.length = 0;
+            document.getElementById("search-from-filter").value = "2026-01-01";
+            document.getElementById("search-to-filter").value = "2026-01-31";
+            document.getElementById("btn-search").click();
+            await flush(window);
+
+            const call = window.API.calls.find((entry) =>
+                entry.url.startsWith("/api/documents?")
+            );
+
+            expect(call).toBeTruthy();
+            expect(call.url).toContain("from=2026-01-01");
+            expect(call.url).toContain("to=2026-01-31");
+            expect(call.url).not.toContain("q=");
+        });
+
+        it("combines every supported search filter", async () => {
+            const handler = (method, url) => {
+                if (url.startsWith("/api/auth/me")) {
+                    return { status: 200, body: { user: USER.viewer } };
+                }
+                if (url.startsWith("/api/documents/filters")) {
+                    return { status: 200, body: FILTERS };
+                }
+                if (url.startsWith("/api/documents?")) {
+                    return { status: 200, body: { documents: [], page: 1, limit: 20, count: 0 } };
+                }
+                return { status: 200, body: {} };
+            };
+
+            const { window, document } = boot(handler);
+            await flush(window);
+
+            window.API.calls.length = 0;
+            document.getElementById("global-search-input").value = "plan";
+            document.getElementById("search-category-filter").value = "Finance";
+            document.getElementById("search-owner-filter").value = "alice@example.com";
+            document.getElementById("search-from-filter").value = "2026-01-01";
+            document.getElementById("search-to-filter").value = "2026-01-31";
+            document.getElementById("btn-search").click();
+            await flush(window);
+
+            const call = window.API.calls.find((entry) =>
+                entry.url.startsWith("/api/documents?")
+            );
+
+            expect(call).toBeTruthy();
+            expect(call.url).toContain("q=plan");
+            expect(call.url).toContain("category=Finance");
+            expect(call.url).toContain("owner=alice%40example.com");
+            expect(call.url).toContain("from=2026-01-01");
+            expect(call.url).toContain("to=2026-01-31");
+        });
+
+        it("does not list every document when the search form is empty", async () => {
+            const { window, document } = boot(signedIn("viewer"));
+            await flush(window);
+
+            window.API.calls.length = 0;
+            document.getElementById("nav-search").click();
+            await flush(window);
+
+            expect(
+                window.API.calls.some((entry) => entry.url.startsWith("/api/documents?"))
+            ).toBe(false);
+            expect(document.getElementById("search-results-tbody").textContent).toContain(
+                "Enter a search term or choose a filter."
+            );
+            expect(document.getElementById("global-search-input").placeholder).toBe(
+                "Search by document name or description…"
+            );
+        });
+
         it("sends the owner filter of Shared with me", async () => {
             const handler = (method, url) => {
                 if (url.startsWith("/api/auth/me")) {
@@ -1214,6 +1433,8 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             disableButton.click();
             await flush(window);
 
+            const reason = "Account no longer requires access.";
+            document.getElementById("confirm-reason").value = reason;
             document.getElementById("confirm-ok").click();
             await flush(window);
 
@@ -1222,7 +1443,7 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             );
             expect(patch).toBeTruthy();
             expect(patch.url).toBe(`/api/admin/users/${USER.viewer.id}/disable`);
-            expect(patch.body).toEqual({ disabled: true });
+            expect(patch.body).toEqual({ disabled: true, reason });
         });
 
         it("changes a role through the admin API", async () => {
@@ -1263,7 +1484,9 @@ describe("TrustVault Frontend: DOM behaviour", () => {
             changeRoleButton.click();
             await flush(window);
 
+            const reason = "Promoted after the access review.";
             document.getElementById("role-select").value = "document_owner";
+            document.getElementById("role-reason").value = reason;
             document
                 .getElementById("role-form")
                 .dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
@@ -1273,7 +1496,7 @@ describe("TrustVault Frontend: DOM behaviour", () => {
                 (entry) => entry.method === "PATCH" && entry.url.includes("/role")
             );
             expect(patch).toBeTruthy();
-            expect(patch.body).toEqual({ role: "document_owner" });
+            expect(patch.body).toEqual({ role: "document_owner", reason });
         });
     });
 
@@ -1511,6 +1734,8 @@ describe("TrustVault Frontend: DOM behaviour", () => {
 
             disableButton.click();
             await flush(window);
+            document.getElementById("confirm-reason").value =
+                "Account no longer requires access.";
             document.getElementById("confirm-ok").click();
             await flush(window);
 

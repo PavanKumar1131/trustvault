@@ -11,6 +11,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const pool = require("../../src/db");
 const config = require("../../src/config");
+const { assertSafeTestDatabase } = require("../testDatabaseGuard");
 
 /** Password used by every test account. */
 const TEST_PASSWORD = "StrongTestPassword!2026";
@@ -28,6 +29,12 @@ const VALID_PNG_BUFFER = Buffer.from(
     "hex"
 );
 
+/** A valid 1x1 JPEG. */
+const VALID_JPEG_BUFFER = Buffer.from(
+    "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EB//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EB//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EB//2Q==",
+    "base64"
+);
+
 /** A file that pretends to be a PDF but is not. */
 const SPOOFED_MALICIOUS_BUFFER = Buffer.from(
     "MZ\x90\x00<script>alert('stolen_document')</script>",
@@ -42,6 +49,11 @@ const SPOOFED_MALICIOUS_BUFFER = Buffer.from(
  * the protection.
  */
 async function resetDatabase() {
+    // Never truncate anything unless the suite is pointed at the loopback
+    // `trustvault_test` database. This repeats the globalSetup check so an
+    // individual helper call cannot bypass it.
+    assertSafeTestDatabase();
+
     await pool.query(`
         TRUNCATE TABLE
             audit_incident_annotations,
@@ -241,6 +253,7 @@ module.exports = {
     TEST_PASSWORD,
     VALID_PDF_BUFFER,
     VALID_PNG_BUFFER,
+    VALID_JPEG_BUFFER,
     SPOOFED_MALICIOUS_BUFFER,
     resetDatabase,
     clearUploadDirectory,
