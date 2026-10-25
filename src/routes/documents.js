@@ -3,12 +3,17 @@ const multer = require("multer");
 const path = require("node:path");
 const { requireAuth } = require("../middleware/auth");
 const pool = require("../db");
-const { resolveDocumentAccess } = require("../services/accessService");
+const {
+    resolveDocumentAccess,
+    resolveDocumentAccessForWrite,
+    lockActiveActorForWrite
+} = require("../services/accessService");
 const { writeAuditLog, lockAuditChain } = require("../services/auditService");
 const {
     saveTemporaryFile,
     getFileBuffer,
     deleteFile,
+    removeStoredFile,
     isValidStorageKey
 } = require("../services/storage");
 const {
@@ -283,6 +288,23 @@ router.post(
                 // transaction acquires the locks in the same order.
                 await lockAuditChain(client);
 
+                // The role check above ran before Multer parsed the request.
+                // Re-read the actor inside the transaction so a concurrent
+                // disable or demotion cannot be bypassed by a slow upload.
+                const actor = await lockActiveActorForWrite(client, req.user.id, {
+                    roles: UPLOAD_ROLES
+                });
+
+                if (!actor) {
+                    await client.query("ROLLBACK");
+                    await writeAuditLog(req, "document_upload", "denied", null, {
+                        reason: "role_or_status_changed_during_upload"
+                    });
+                    return res.status(403).json({
+                        message: "Access denied: only document owners can upload documents"
+                    });
+                }
+
                 storedFile = await saveTemporaryFile(req.file.buffer, client);
 
                 const inserted = await client.query(
@@ -375,6 +397,14 @@ router.get("/", requireAuth, async (req, res) => {
             });
         }
 
+        // A date-only `to` means the whole UTC day, not midnight at its start.
+        // Expand it before the range check and before the value is passed to
+        // the query builder, which otherwise receives an ISO timestamp.
+        const rawTo = typeof req.query.to === "string" ? req.query.to.trim() : "";
+        if (toDate && /^\d{4}-\d{2}-\d{2}$/.test(rawTo)) {
+            toDate.setUTCHours(23, 59, 59, 999);
+        }
+
         if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
             return res.status(400).json({
                 message: "from must not be later than to"
@@ -460,8 +490,10 @@ router.get("/filters", requireAuth, async (req, res) => {
             `SELECT DISTINCT d.category, u.name AS owner_name, u.email AS owner_email
              FROM documents d
              JOIN users u ON u.id = d.owner_id
-             WHERE (
-                d.owner_id = $1
+             JOIN users account ON account.id = $1
+             WHERE account.is_disabled = false
+               AND (
+                (account.role = 'document_owner' AND d.owner_id = $1)
                 OR EXISTS (
                     SELECT 1 FROM document_permissions dp
                     WHERE dp.document_id = d.id
@@ -506,6 +538,14 @@ router.get("/filters", requireAuth, async (req, res) => {
 router.get("/summary", requireAuth, async (req, res) => {
     try {
         setNoCacheHeaders(res);
+
+        // The dashboard aggregates Owner-only management data. A Viewer whose
+        // former documents now carry legacy Read grants must not see it.
+        if (req.user.role !== "document_owner") {
+            return res.status(403).json({
+                message: "Access denied: document owner role required"
+            });
+        }
 
         const userId = req.user.id;
 
@@ -699,6 +739,33 @@ router.post("/:id/permissions", requireAuth, async (req, res) => {
             await client.query("BEGIN");
             await lockAuditChain(client);
 
+            // Re-check the owner privilege after the account and document
+            // rows are locked. A concurrent demotion, disable or deletion
+            // must not be able to slip between the pre-check and this write.
+            const lockedAccess = await resolveDocumentAccessForWrite(
+                client,
+                req.user,
+                documentId
+            );
+
+            if (!lockedAccess.canManage) {
+                await client.query("ROLLBACK");
+                await writeAuditLog(
+                    req,
+                    "document_permission_grant",
+                    "denied",
+                    auditDocumentId(lockedAccess, documentId),
+                    {
+                        requestedDocumentId: documentId,
+                        reason: lockedAccess.exists
+                            ? "not_document_owner"
+                            : "document_not_found",
+                        permission
+                    }
+                );
+                return res.status(404).json({ message: "Document not found" });
+            }
+
             // Atomic upsert: a user can only hold one permission level per
             // document, so granting "edit" replaces an existing "read" grant
             // instead of creating a second, conflicting row.
@@ -799,6 +866,38 @@ async function handleRevokePermission(req, res) {
         try {
             await client.query("BEGIN");
             await lockAuditChain(client);
+
+            const lockedAccess = await resolveDocumentAccessForWrite(
+                client,
+                req.user,
+                documentId
+            );
+
+            if (!lockedAccess.canManage) {
+                await client.query("ROLLBACK");
+                await writeAuditLog(
+                    req,
+                    "document_permission_revoke",
+                    "denied",
+                    auditDocumentId(lockedAccess, documentId),
+                    {
+                        requestedDocumentId: documentId,
+                        userId,
+                        permission,
+                        reason: lockedAccess.exists
+                            ? "not_document_owner"
+                            : "document_not_found"
+                    }
+                );
+                return res.status(404).json({ message: "Permission not found" });
+            }
+
+            if (userId === lockedAccess.documentOwnerId) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({
+                    message: "The document owner's access cannot be revoked"
+                });
+            }
 
             const deleted = permission
                 ? await client.query(
@@ -996,6 +1095,7 @@ router.put("/:id", requireAuth, handleMulterUpload, async (req, res) => {
     }
 
     let newStoredFile = null;
+    let newStorageKey = null;
 
     try {
         const access = await resolveDocumentAccess(req.user, documentId);
@@ -1019,43 +1119,7 @@ router.put("/:id", requireAuth, handleMulterUpload, async (req, res) => {
             });
         }
 
-        const existingResult = await pool.query(
-            "SELECT * FROM documents WHERE id = $1 LIMIT 1",
-            [documentId]
-        );
-        if (existingResult.rows.length === 0) {
-            return res.status(404).json({ message: "Document not found" });
-        }
-        const existing = existingResult.rows[0];
-
-        const updatedName =
-            typeof req.body?.name === "string" && req.body.name.trim()
-                ? req.body.name.trim()
-                : existing.name;
-        const updatedCategory =
-            typeof req.body?.category === "string" && req.body.category.trim()
-                ? req.body.category.trim()
-                : existing.category;
-        const updatedDescription =
-            typeof req.body?.description === "string"
-                ? req.body.description.trim()
-                : existing.description;
-
-        if (
-            !updatedName ||
-            updatedName.length > 255 ||
-            updatedCategory.length > 100 ||
-            (updatedDescription !== null && updatedDescription.length > 2000)
-        ) {
-            return res.status(400).json({
-                message: "Invalid document name, category, or description"
-            });
-        }
-
-        let newMime = existing.content_type;
-        let newOriginalFilename = existing.original_filename;
-        let newFileSize = existing.file_size;
-        let newStorageKey = existing.storage_key;
+        let detectedMime = null;
 
         if (req.file) {
             if (!req.file.buffer || req.file.buffer.length === 0) {
@@ -1064,7 +1128,7 @@ router.put("/:id", requireAuth, handleMulterUpload, async (req, res) => {
                 });
             }
 
-            const detectedMime = await detectAllowedFileType(req.file.buffer);
+            detectedMime = await detectAllowedFileType(req.file.buffer);
             if (!detectedMime) {
                 await writeAuditLog(req, "document_edit", "denied", documentId, {
                     reason: "unsupported_or_spoofed_file_type"
@@ -1073,19 +1137,91 @@ router.put("/:id", requireAuth, handleMulterUpload, async (req, res) => {
                     message: "Only valid PDF, JPEG, and PNG files are allowed"
                 });
             }
-            newMime = detectedMime;
-            newOriginalFilename = safeOriginalFilename(req.file.originalname);
         }
 
+        let oldStorageKey = null;
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
             await lockAuditChain(client);
 
+            // Re-check edit access after locking the actor and the document.
+            // A revoked grant, demotion, disable or concurrent deletion must
+            // not be bypassed by the earlier read-only pre-check.
+            const lockedAccess = await resolveDocumentAccessForWrite(
+                client,
+                req.user,
+                documentId
+            );
+
+            if (!lockedAccess.canEdit) {
+                await client.query("ROLLBACK");
+                await writeAuditLog(
+                    req,
+                    "document_edit",
+                    "denied",
+                    auditDocumentId(lockedAccess, documentId),
+                    {
+                        requestedDocumentId: documentId,
+                        reason: lockedAccess.canRead
+                            ? "read_only_user_attempted_edit"
+                            : "unauthorized_user"
+                    }
+                );
+                return res.status(lockedAccess.canRead ? 403 : 404).json({
+                    message: lockedAccess.canRead
+                        ? "Access denied: edit permission is required to modify this document"
+                        : "Document not found"
+                });
+            }
+
+            const existingResult = await client.query(
+                "SELECT * FROM documents WHERE id = $1 LIMIT 1",
+                [documentId]
+            );
+            if (existingResult.rows.length === 0) {
+                await client.query("ROLLBACK");
+                return res.status(404).json({ message: "Document not found" });
+            }
+            const existing = existingResult.rows[0];
+            oldStorageKey = existing.storage_key;
+
+            const updatedName =
+                typeof req.body?.name === "string" && req.body.name.trim()
+                    ? req.body.name.trim()
+                    : existing.name;
+            const updatedCategory =
+                typeof req.body?.category === "string" && req.body.category.trim()
+                    ? req.body.category.trim()
+                    : existing.category;
+            const updatedDescription =
+                typeof req.body?.description === "string"
+                    ? req.body.description.trim()
+                    : existing.description;
+
+            if (
+                !updatedName ||
+                updatedName.length > 255 ||
+                updatedCategory.length > 100 ||
+                (updatedDescription !== null && updatedDescription.length > 2000)
+            ) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({
+                    message: "Invalid document name, category, or description"
+                });
+            }
+
+            let newMime = existing.content_type;
+            let newOriginalFilename = existing.original_filename;
+            let newFileSize = existing.file_size;
+            newStorageKey = existing.storage_key;
+
             if (req.file) {
                 newStoredFile = await saveTemporaryFile(req.file.buffer, client);
                 newStorageKey = newStoredFile.storageKey;
                 newFileSize = newStoredFile.size;
+                newMime = detectedMime;
+                newOriginalFilename = safeOriginalFilename(req.file.originalname);
             }
 
             await client.query(
@@ -1133,8 +1269,8 @@ router.put("/:id", requireAuth, handleMulterUpload, async (req, res) => {
             client.release();
         }
 
-        if (req.file && existing.storage_key !== newStorageKey) {
-            await deleteFile(existing.storage_key).catch(() => {});
+        if (req.file && oldStorageKey && oldStorageKey !== newStorageKey) {
+            await deleteFile(oldStorageKey).catch(() => {});
         }
 
         const updatedDoc = await getDocumentAccess(documentId, req.user.id);
@@ -1181,19 +1317,51 @@ router.delete("/:id", requireAuth, async (req, res) => {
             });
         }
 
-        const existingResult = await pool.query(
-            "SELECT id, name, storage_key FROM documents WHERE id = $1 LIMIT 1",
-            [documentId]
-        );
-        if (existingResult.rows.length === 0) {
-            return res.status(404).json({ message: "Document not found" });
-        }
-        const existing = existingResult.rows[0];
-
+        let existing = null;
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
             await lockAuditChain(client);
+
+            // The earlier access check is only a fast path. Re-check after
+            // locking the actor and the document so a demotion, disable,
+            // grant change or concurrent deletion cannot race this write.
+            const lockedAccess = await resolveDocumentAccessForWrite(
+                client,
+                req.user,
+                documentId
+            );
+
+            if (!lockedAccess.canDelete) {
+                await client.query("ROLLBACK");
+                await writeAuditLog(
+                    req,
+                    "document_delete",
+                    "denied",
+                    auditDocumentId(lockedAccess, documentId),
+                    {
+                        requestedDocumentId: documentId,
+                        reason: lockedAccess.exists
+                            ? "non_owner_attempted_delete"
+                            : "unauthorized_user"
+                    }
+                );
+                return res.status(lockedAccess.canRead ? 403 : 404).json({
+                    message: lockedAccess.canRead
+                        ? "Access denied: only the document owner can delete this document"
+                        : "Document not found"
+                });
+            }
+
+            const existingResult = await client.query(
+                "SELECT id, name, storage_key FROM documents WHERE id = $1 LIMIT 1",
+                [documentId]
+            );
+            if (existingResult.rows.length === 0) {
+                await client.query("ROLLBACK");
+                return res.status(404).json({ message: "Document not found" });
+            }
+            existing = existingResult.rows[0];
 
             await writeAuditLog(
                 req,
@@ -1205,7 +1373,15 @@ router.delete("/:id", requireAuth, async (req, res) => {
                 client
             );
 
+            // Remove the metadata (which cascades the grants) and the blob
+            // row in the same transaction. The blob row is deleted after the
+            // document so the documents.storage_key foreign key cannot cascade
+            // the document itself.
             await client.query("DELETE FROM documents WHERE id = $1", [documentId]);
+            await client.query(
+                "DELETE FROM document_blobs WHERE storage_key = $1",
+                [existing.storage_key]
+            );
 
             await client.query("COMMIT");
         } catch (error) {
@@ -1215,11 +1391,21 @@ router.delete("/:id", requireAuth, async (req, res) => {
             client.release();
         }
 
-        await deleteFile(existing.storage_key).catch(() => {});
+        // The database no longer references the file. The filesystem unlink is
+        // a post-commit step: if it fails, the document is still permanently
+        // deleted but an orphaned file may remain, so the response must not
+        // claim that cleanup completed.
+        const cleanup = await removeStoredFile(existing.storage_key);
+        if (!cleanup.removed) {
+            console.error("Document file cleanup pending:", cleanup.reason);
+        }
 
         return res.json({
-            message: "Document deleted",
-            documentId
+            message: cleanup.removed
+                ? "Document deleted"
+                : "Document deleted; the stored file could not be removed and requires cleanup",
+            documentId,
+            storageCleanup: cleanup.removed ? "complete" : "pending"
         });
     } catch (error) {
         console.error("Document deletion failed:", error.message);

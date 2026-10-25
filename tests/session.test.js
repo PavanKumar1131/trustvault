@@ -11,6 +11,7 @@ const app = require("../src/app");
 const pool = require("../src/db");
 const {
     TEST_PASSWORD,
+    VALID_PDF_BUFFER,
     resetDatabase,
     createUser,
     registerAndLogin,
@@ -18,6 +19,8 @@ const {
     countRows,
     fetchAuditLogs
 } = require("./helpers");
+
+const REASON = "Operational access change approved by an administrator.";
 
 describe("TrustVault sessions", () => {
     const testRunId = Date.now().toString(36);
@@ -171,7 +174,7 @@ describe("TrustVault sessions", () => {
 
         const response = await agents.admin
             .patch(`/api/admin/users/${target.user.id}/disable`)
-            .send({ disabled: true });
+            .send({ disabled: true, reason: REASON });
 
         expect(response.status).toBe(200);
         expect(response.body.revokedSessions).toBeGreaterThan(0);
@@ -194,12 +197,12 @@ describe("TrustVault sessions", () => {
 
         const disable = await agents.admin
             .patch(`/api/admin/users/${target.user.id}/disable`)
-            .send({ disabled: true });
+            .send({ disabled: true, reason: REASON });
         expect(disable.status).toBe(200);
 
         const enable = await agents.admin
             .patch(`/api/admin/users/${target.user.id}/disable`)
-            .send({ disabled: false });
+            .send({ disabled: false, reason: REASON });
         expect(enable.status).toBe(200);
 
         // Database state: the account is active again but has no session.
@@ -354,25 +357,45 @@ describe("TrustVault sessions", () => {
     test("11. The account state is re-read on every request", async () => {
         const email = `session.liverole.${testRunId}@trustvault.test`;
         const target = await registerAndLogin(app, {
-            name: "Live Role", email, role: "document_owner"
+            name: "Live Role", email, role: "viewer"
         });
 
-        // Promote the account to administrator.
+        const viewerUpload = await target.agent
+            .post("/api/documents")
+            .field("name", `LiveRoleBefore_${testRunId}`)
+            .attach("file", VALID_PDF_BUFFER, "before.pdf");
+        expect(viewerUpload.status).toBe(403);
+
+        // Promote the account to Document Owner.
         const promote = await agents.admin
             .patch(`/api/admin/users/${target.user.id}/role`)
-            .send({ role: "admin" });
+            .send({ role: "document_owner", reason: REASON });
         expect(promote.status).toBe(200);
 
         // The existing session immediately has the new rights.
-        const adminAccess = await target.agent.get("/api/admin/users");
-        expect(adminAccess.status).toBe(200);
+        const ownerUpload = await target.agent
+            .post("/api/documents")
+            .field("name", `LiveRoleAfter_${testRunId}`)
+            .attach("file", VALID_PDF_BUFFER, "after.pdf");
+        expect(ownerUpload.status).toBe(201);
 
         // Demote again.
         const demote = await agents.admin
             .patch(`/api/admin/users/${target.user.id}/role`)
-            .send({ role: "document_owner" });
+            .send({ role: "viewer", reason: REASON });
         expect(demote.status).toBe(200);
 
+        const viewerUploadAfter = await target.agent
+            .post("/api/documents")
+            .field("name", `LiveRoleDemoted_${testRunId}`)
+            .attach("file", VALID_PDF_BUFFER, "demoted.pdf");
+        expect(viewerUploadAfter.status).toBe(403);
+
+        const me = await target.agent.get("/api/auth/me");
+        expect(me.status).toBe(200);
+        expect(me.body.user.role).toBe("viewer");
+
+        // The account never gained administrator rights.
         const adminAccessAfter = await target.agent.get("/api/admin/users");
         expect(adminAccessAfter.status).toBe(403);
     });

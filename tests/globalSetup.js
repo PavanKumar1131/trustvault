@@ -17,27 +17,25 @@ process.env.UPLOAD_DIR =
     path.join(__dirname, "..", ".tmp", "test-uploads");
 
 const config = require("../src/config");
+const { assertSafeTestDatabase } = require("./testDatabaseGuard");
 
 module.exports = async () => {
     if (!config.IS_TEST) {
         throw new Error("The test-suite must run with NODE_ENV=test.");
     }
 
-    const databaseName = config.databaseNameFromUrl(config.DATABASE_URL);
-
-    if (!databaseName || !/test/i.test(databaseName)) {
-        throw new Error(
-            `Refusing to prepare "${databaseName}" for testing. The test database ` +
-            "name must contain the word \"test\"."
-        );
-    }
+    // Prints the loopback host and exact database name before anything is
+    // truncated or migrated. Throws for any other host or database.
+    const target = assertSafeTestDatabase({ print: true });
 
     const { migrate } = require("../src/scripts/migrate");
     const pool = require("../src/db");
 
     try {
         await migrate();
-        console.log(`\n[tests] schema ready on test database "${databaseName}"\n`);
+        console.log(
+            `\n[tests] schema ready on test database "${target.database}"\n`
+        );
     } finally {
         await pool.end().catch(() => {});
     }

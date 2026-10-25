@@ -154,16 +154,22 @@ receives unauthorized elevated rights.
 **Mitigation.** The public registration endpoint strictly ignores any client-supplied
 `role` parameter and hardcodes all new accounts to the default role `viewer`.
 Role escalation to `document_owner` or `admin` cannot be performed through
-self-registration and is strictly restricted to authenticated administrators
-using `PATCH /api/admin/users/:id/role`. The role change endpoint validates
-against an explicit allow-list (`admin`, `document_owner`, `viewer`), forbids
-self-demotion, and protects the last active administrator with concurrency locks.
-The authenticated role is re-read from the database on every request, ensuring
-role changes and account disablement take effect immediately.
+self-registration. Administrator account creation (`POST /api/admin/users`) is
+limited to `viewer` and `document_owner` and never mints an Admin. The role
+change endpoint (`PATCH /api/admin/users/:id/role`) accepts only the
+`viewer` <-> `document_owner` transition, requires a 10-500 character reason,
+forbids self-modification, protects Admin accounts, and keeps at least one
+active administrator under an advisory lock. A Document Owner demotion creates
+a Read grant for every document the account owns, so ownership does not remain
+an implicit owner privilege. The acting administrator is re-read and locked
+inside the account-creation and role-change transactions, and `requireAuth`
+re-reads the authenticated role and status on every request.
 
 **Tests.** `tests/security.test.js` (client role parameter ignored on registration,
 default viewer assignment, role escalation attempts rejected),
-`tests/authorization.test.js` (role change takes effect without a new login).
+`tests/authorization.test.js` (role change takes effect without a new login),
+`tests/admin-users.test.js`, `tests/role-upgrade.test.js`,
+`tests/hardening-regressions.test.js`, and `tests/concurrency.test.js`.
 
 ---
 
@@ -246,15 +252,33 @@ executable or a script; the server trusts the extension or the client
 supplied MIME type and later serves it.
 
 **Mitigation.** The content type is detected from the bytes of the file
-(`file-type`), not from the name. Only PDF, JPEG and PNG are accepted; a
-mismatch is rejected with `415` before anything is stored. Downloads are
-served as an `attachment` with `X-Content-Type-Options: nosniff` and
-`Cache-Control: no-store`.
+(`file-type`), not from the name or the client-supplied MIME type. Only PDF,
+JPEG and PNG content is accepted; unsupported or spoofed content is rejected
+with `415` before anything is stored. Downloads are served as an `attachment`
+with `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`.
+
+The API deliberately treats content as authoritative: a valid PNG named
+`.pdf` is accepted and stored as `image/png`. The browser restricts the file
+picker to `.pdf`, `.jpg`, `.jpeg`, and `.png`, but the server does not enforce
+extension/content consistency.
 
 **Residual.** Polyglot files (a valid PDF that also contains HTML) are still
 possible; the `attachment` disposition and `nosniff` are what contain them.
+A valid file with a misleading but allowed extension is stored according to
+its detected content. This is a **Low** residual risk because the stored type
+is derived from content and is never served inline.
 
-**Tests.** `tests/security.test.js` (spoofed file), `tests/documents.test.js`.
+**Proposed correction — not implemented.** Before changing the file-validation
+contract, the safest correction is to reject an upload when the extension is
+outside the allowed set or when the detected type's canonical extension does
+not match the supplied extension. Magic-byte detection and the existing three
+formats would remain unchanged; no new format would be added. This aligns the
+browser and server rules but may reject legitimately misnamed files, so it
+needs an explicit product decision.
+
+**Tests.** `tests/security.test.js` (spoofed file),
+`tests/documents.test.js` (JPEG/PNG handling, the exact 5 MiB boundary, a PNG
+stored as `image/png` despite a `.pdf` name, and spoofed JPEG content rejected).
 
 ---
 
@@ -449,14 +473,16 @@ and to retry the request once.
 
 **Risk.** Large uploads exhaust the disk, the memory or the database.
 
-**Mitigation.** `multer` keeps the upload in memory with a hard size
-limit, the JSON body limit is 1 MB, and the general rate limiter caps the
-number of requests per client.
+**Mitigation.** `multer` keeps the upload in memory with a hard limit of
+5 MiB (5,242,880 bytes), the JSON body limit is 1 MB, and the general rate
+limiter caps the number of requests per client. An upload of exactly
+5,242,880 bytes is accepted; one byte more is rejected with `413`.
 
 **Residual.** The blobs are stored in the database, so the upload volume
 grows the database. There is no per-user quota and no virus scanning.
 
-**Tests.** `tests/security.test.js` (oversized body).
+**Tests.** `tests/security.test.js` (oversized body),
+`tests/documents.test.js` (exact 5 MiB accepted, 5 MiB + 1 rejected).
 
 ---
 
@@ -600,7 +626,7 @@ from the application code and has to be checked during the deployment.
 
 ---
 
-### T-24 — Race between disabling an account and an in-flight request
+### T-24 — Race between an account role/status change and an in-flight security-sensitive write
 
 | | |
 | --- | --- |
@@ -608,19 +634,32 @@ from the application code and has to be checked during the deployment.
 | **Severity** | Medium |
 | **Status** | Mitigated |
 
-**Risk.** A request that is already being processed when the account is
-disabled still completes.
+**Risk.** A security-sensitive request that is already being processed when
+the account is disabled or demoted still completes with its stale privilege.
 
-**Mitigation.** Disabling the account deletes all of its sessions in the
-same transaction, and `requireAuth` re-reads the account on **every**
-request and refuses a disabled account even if a session row survived. A
-request that was already past the authorisation check is not aborted — that
-would require cancelling the database query — but it cannot start a new
-one.
+**Mitigation.** Disabling an account deletes all of its sessions in the same
+transaction, and `requireAuth` re-reads the account on **every** request and
+refuses a disabled account even if a session row survived. Document upload,
+grant, revoke, edit and delete now revalidate the actor inside their write
+transaction after acquiring a `FOR SHARE` lock on the actor's `users` row and,
+for document writes, a `FOR UPDATE` lock on the document. Administrator
+account creation uses the same actor revalidation. The lock order is audit
+chain -> actor -> document, matching the account-management service, so a
+concurrent demotion or disable either commits before the write or waits until
+it has finished. `tests/concurrency.test.js` holds the account row with
+`FOR UPDATE`, waits for PostgreSQL to report the request's `FOR SHARE` lock
+wait, then commits the demotion/disable and proves the write is refused.
 
-**Tests.** `tests/security.test.js` (the old cookie is worthless),
-`tests/authorization.test.js` (a session that survived is refused with
-`403`).
+**Residual.** A read or download that has already passed its authorization
+check may still complete; aborting it would require cancelling an in-flight
+database query. Self-service writes such as password change and request
+cancellation are not transactionally revalidated. Both are **Low** residual
+risks because they cannot create new document access or administrative
+authority.
+
+**Tests.** `tests/concurrency.test.js`, `tests/security.test.js` (the old
+cookie is worthless), `tests/authorization.test.js` (a session that survived
+is refused with `403`).
 
 ---
 
@@ -662,8 +701,23 @@ keys. The audit trail is independent of the lifecycle of the users and the
 documents it refers to; the names are resolved with `LEFT JOIN` at query
 time.
 
+Deletion is a permanent hard delete with no restore endpoint or UI. The
+deletion audit entry, document metadata, cascaded grants, and the
+`document_blobs` row are removed in one transaction, so the database cannot be
+left with metadata but no blob or grants. Older audit rows and their hashes
+are not rewritten, and the deletion event is retained with the deleted
+document id.
+
+The filesystem unlink runs after the commit. If it fails, the database
+deletion remains complete, the API returns `storageCleanup: "pending"` with a
+message that the stored file could not be removed, and an orphaned local file
+may remain. The response never claims complete cleanup in that case. See T-31
+for the cleanup limitation.
+
 **Tests.** `tests/documents.test.js` (the deletion removes the document, its
-blob and its grants).
+blob and its grants), `tests/deletion-retention.test.js` (audit retention,
+unchanged older hashes, verifier result, and a simulated unlink failure),
+`tests/security.test.js` (normal cleanup and tampered storage key).
 
 ---
 
@@ -679,20 +733,25 @@ blob and its grants).
 truncating data, and running triggers. Running tests against production or
 development databases would destroy live records or corrupt data.
 
-**Mitigation.** [`src/config.js`](src/config.js) and
-[`tests/setupEnv.js`](tests/setupEnv.js) enforce strict,
-non-bypassable pre-flight safety guards when `NODE_ENV=test`. Execution aborts
-immediately if `TEST_DATABASE_URL` is missing, lacks an extractable database name,
-equals `DATABASE_URL`, or points to a database whose name does not contain the
-word `test` (`/test/i`). Protected databases (`postgres`, `neondb`, `trustvault`,
-`master`) are strictly refused.
+**Mitigation.** [`src/config.js`](src/config.js) refuses to start when
+`NODE_ENV=test` and `TEST_DATABASE_URL` is missing, points at the protected
+`neondb` database, equals the development database, or lacks the word `test`
+in its database name. The destructive test runner then applies the stricter
+guard in [`tests/testDatabaseGuard.js`](tests/testDatabaseGuard.js):
+[`tests/globalSetup.js`](tests/globalSetup.js) prints only the resolved host
+and database name, and aborts unless the host is a loopback address
+(`127.0.0.1`, `localhost`, or `::1`) and the database name is exactly
+`trustvault_test`. `resetDatabase()` calls the same guard again so an
+individual helper cannot be repointed at another database.
 
-**Residual.** A developer who deliberately creates a production database with
-the word `test` in its name could theoretically pass the substring check; however,
-the `DATABASE_URL === TEST_DATABASE_URL` check still catches identical URLs.
+**Residual.** The guard cannot distinguish a developer's own local database
+named exactly `trustvault_test` from the dedicated test database; running the
+suite against it is destructive by design. Use a dedicated local test
+instance or database.
 
-**Tests.** `tests/config.test.js` (verifies fail-closed rejection of `neondb`
-and verification of dedicated test database).
+**Tests.** `tests/config.test.js` (fail-closed rejection and dedicated test
+database verification), `tests/hardening-regressions.test.js` (the exact
+loopback/exact-name guard and the printed target).
 
 ---
 
@@ -776,14 +835,51 @@ an explicit grant in `document_permissions` receive `404 Not Found` (preventing
 IDOR existence leakage). An `edit` grant permits reading, downloading, and
 replacing content, but returns `403 Forbidden` if the user attempts to share,
 modify permissions, or delete the document. Administrators have zero implicit
-access to documents (returning `404 Not Found`).
+access to documents (returning `404 Not Found`). Search filters are applied on
+top of the same authorization predicate; a category-, owner-, or date-only
+search cannot widen the caller's result set. Grant, revoke, edit, delete, and
+upload revalidate the actor and document inside the write transaction after
+locking them, closing the race between authorization and the protected write.
 
 **Residual.** Document owners have full control over their documents. If an owner's
 credentials are compromised, an attacker can access all documents owned by that
 account.
 
 **Tests.** `tests/authorization.test.js`, `tests/permissions.test.js`,
-`tests/documents.test.js`.
+`tests/documents.test.js`, `tests/search.test.js` (filters preserve the
+authorization scope), `tests/concurrency.test.js`.
+
+---
+
+### T-31 — Orphaned file after a failed post-commit unlink
+
+| | |
+| --- | --- |
+| **Model** | E, F |
+| **Severity** | Low |
+| **Status** | **Residual — accepted** |
+
+**Risk.** The database deletion commits, but the local file-system unlink fails
+(for example because of permissions, a replaced directory, or an I/O error).
+The file remains on disk after the document metadata is gone, consuming space
+and retaining content that the database no longer references.
+
+**Mitigation.** The unlink result is explicit rather than swallowed. A failed
+removal returns `storageCleanup: "pending"` with a message that the stored file
+could not be removed, logs only the operating-system error code, and never
+claims complete cleanup. The database state remains consistent: metadata,
+grants, and the blob row are removed atomically. A successful or already-absent
+file returns `storageCleanup: "complete"`. Tests simulate the failure by
+replacing the stored file with a directory.
+
+**Residual.** There is no automatic retry, garbage-collection job, or operator
+alert for the orphan. The application cannot identify the orphan after the
+database row is deleted, so cleanup requires access to the configured upload
+directory. The risk is **Low** because the database remains authoritative for
+downloads and the file is not served after deletion.
+
+**Tests.** `tests/deletion-retention.test.js` (simulated unlink failure and
+honest response), `tests/security.test.js` (tampered storage key).
 
 ---
 
@@ -814,13 +910,14 @@ account.
 | Medium | T-15 Disclosure of internal details | Mitigated |
 | Medium | T-16 Denial of service through the upload endpoint | Partially mitigated |
 | Medium | T-19 Missing multi-factor authentication | **Open — out of scope** |
-| Medium | T-24 Race between disabling and an in-flight request | Mitigated |
+| Medium | T-24 Race between an account role/status change and an in-flight write | Mitigated |
 | Medium | T-25 A duplicate grant row weakens the access list | Mitigated |
 | Medium | T-26 The audit trail is rewritten by a deletion | Mitigated |
 | Low | T-09 Enumeration of disabled accounts | **Residual — accepted** |
 | Low | T-17 Unbounded growth of the audit table | **Open — operationally** |
 | Low | T-18 The login lockout is per process | **Open — deployment** |
 | Low | T-22 Clickjacking and missing headers | Mitigated |
+| Low | T-31 Orphaned file after a failed post-commit unlink | **Residual — accepted** |
 
 ---
 
@@ -840,6 +937,8 @@ Before the application goes live:
       more than tamper-evident.
 - [ ] The database backups are in place and a restore has been tested.
 - [ ] An archiving job for `audit_logs` is configured.
+- [ ] A procedure exists to monitor `storageCleanup: "pending"` deletion results and remove orphaned files from the configured upload directory.
+- [ ] The test target is a loopback host with the exact database name `trustvault_test`; the suite is never pointed at a hosted or development database.
 - [ ] The rate limits (`RATE_LIMIT_API`, `RATE_LIMIT_AUTH`) are tuned for
       the expected traffic.
 - [ ] `npm run seed` is never part of a production deployment.

@@ -218,6 +218,25 @@
         ids.forEach((entry) => setFieldError(entry[0], entry[1], ""));
     }
 
+    const REASON_MIN_LENGTH = 10;
+    const REASON_MAX_LENGTH = 500;
+    const REASON_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+    /** Mirrors the server-side reason contract so the form can fail early. */
+    function validateReason(value, fieldName) {
+        const normalized = typeof value === "string" ? value.trim() : "";
+        if (!normalized) return fieldName + " is required";
+        if (REASON_CONTROL_CHARACTERS.test(normalized)) {
+            return fieldName + " must not contain control characters";
+        }
+        const length = Array.from(normalized).length;
+        if (length < REASON_MIN_LENGTH || length > REASON_MAX_LENGTH) {
+            return fieldName + " must be between " + REASON_MIN_LENGTH +
+                " and " + REASON_MAX_LENGTH + " characters";
+        }
+        return null;
+    }
+
     // ── Banners ────────────────────────────────────────────────────────────────
 
     /**
@@ -541,20 +560,44 @@
         const titleNode = el("confirm-title");
         const messageNode = el("confirm-message");
         const okButton = el("confirm-ok");
+        const reasonGroup = el("confirm-reason-group");
+        const reasonInput = el("confirm-reason");
+        const reasonLabel = el("confirm-reason-label");
+        const requiresReason = Boolean(options.requireReason);
 
         if (titleNode) titleNode.textContent = options.title || "Confirm";
         if (messageNode) messageNode.textContent = options.message || "";
+
+        if (reasonGroup) reasonGroup.classList.toggle("hidden", !requiresReason);
+        if (reasonLabel) reasonLabel.textContent = options.reasonLabel || "Reason";
+        if (reasonInput) {
+            reasonInput.value = "";
+            reasonInput.setAttribute("aria-required", requiresReason ? "true" : "false");
+        }
+        setFieldError("confirm-reason", "confirm-reason-error", "");
 
         const previousHandler = okButton ? okButton.onclick : null;
         if (okButton) {
             okButton.textContent = options.confirmLabel || "Confirm";
             okButton.className = options.danger === false ? "btn btn-primary" : "btn btn-danger";
             okButton.onclick = async () => {
+                let reason;
+                if (requiresReason) {
+                    reason = reasonInput ? reasonInput.value : "";
+                    const reasonError = validateReason(reason, options.reasonLabel || "Reason");
+                    if (reasonError) {
+                        setFieldError("confirm-reason", "confirm-reason-error", reasonError);
+                        if (reasonInput) reasonInput.focus();
+                        return;
+                    }
+                    reason = reason.trim();
+                }
+
                 if (okButton) {
                     okButton.disabled = true;
                 }
                 try {
-                    await options.onConfirm();
+                    await options.onConfirm(reason);
                 } finally {
                     if (okButton) {
                         okButton.disabled = false;
@@ -565,6 +608,7 @@
         }
 
         openModal("confirm-modal");
+        if (requiresReason && reasonInput) reasonInput.focus();
     }
 
     // ── API layer ──────────────────────────────────────────────────────────────
@@ -1109,19 +1153,33 @@
     loaders.search = function loadSearch() {
         applyRoleCopy();
         const term = valueOf("global-search-input");
+        const category = valueOf("search-category-filter");
+        const owner = valueOf("search-owner-filter");
+        const from = valueOf("search-from-filter");
+        const to = valueOf("search-to-filter");
         const tbody = el("search-results-tbody");
-        if (!term) {
-            emptyState(tbody, "Enter a query above to search documents.", "", 6);
+
+        // Every supported filter is optional. A category, owner or date range
+        // on its own is a valid search; only the completely empty form needs a
+        // hint instead of an API call that would list every accessible file.
+        if (!term && !category && !owner && !from && !to) {
+            emptyState(
+                tbody,
+                "Enter a search term or choose a filter.",
+                "",
+                6
+            );
             clear(el("search-pagination"));
             return;
         }
+
         loadDocumentList({
             q: term,
             page: state.pages.search,
-            category: valueOf("search-category-filter"),
-            owner: valueOf("search-owner-filter"),
-            from: valueOf("search-from-filter"),
-            to: valueOf("search-to-filter"),
+            category: category,
+            owner: owner,
+            from: from,
+            to: to,
             tbody: tbody,
             pagination: el("search-pagination"),
             colSpan: 6,
@@ -2030,7 +2088,7 @@
             tr.appendChild(makeCell(details || "—", "request-decision-details"));
             const actions = document.createElement("td"); actions.className = "td-actions";
             if (request.status === "pending" && request.requesterId !== state.user.id && request.requestType === "document_owner_upgrade") {
-                const approve = actionButton("Approve", "btn-action", (event) => decideAdminRequest(request, "approve", "", event.currentTarget));
+                const approve = actionButton("Approve", "btn-action", () => showApproveEditor(actions, request));
                 approve.setAttribute("aria-label", "Approve request from " + (requester.name || requester.email || "requester"));
                 const reject = actionButton("Reject", "btn-action danger", () => showRejectEditor(actions, request));
                 reject.setAttribute("aria-label", "Reject request from " + (requester.name || requester.email || "requester"));
@@ -2041,6 +2099,32 @@
             tr.appendChild(actions);
             tbody.appendChild(tr);
         });
+    }
+
+    function showApproveEditor(container, request) {
+        clear(container);
+        const form = document.createElement("form"); form.className = "request-approve-form";
+        const label = document.createElement("label"); label.textContent = "Approval reason (required)";
+        const input = document.createElement("textarea"); input.id = "request-approval-reason-" + request.id; label.htmlFor = input.id; input.maxLength = 500; input.rows = 2;
+        const error = document.createElement("p"); error.className = "field-error hidden"; error.setAttribute("aria-live", "polite");
+        const confirm = document.createElement("button"); confirm.type = "submit"; confirm.className = "btn-action"; confirm.textContent = "Confirm approve";
+        const cancel = actionButton("Cancel", "btn-action", () => { container.textContent = ""; });
+        form.append(label, input, error, confirm, cancel); container.appendChild(form);
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const reason = input.value;
+            const reasonError = validateReason(reason, "Approval reason");
+            if (reasonError) {
+                error.textContent = reasonError;
+                error.classList.remove("hidden");
+                input.focus();
+                return;
+            }
+            error.textContent = "";
+            error.classList.add("hidden");
+            decideAdminRequest(request, "approve", reason.trim(), confirm);
+        });
+        input.focus();
     }
 
     function showRejectEditor(container, request) {
@@ -2058,7 +2142,7 @@
     async function decideAdminRequest(request, action, decisionNote, button) {
         await withBusy(button, async () => {
             try {
-                const result = await api("POST", "/api/admin/requests/" + encodeURIComponent(request.id) + "/" + action, action === "reject" ? { decisionNote } : {});
+                const result = await api("POST", "/api/admin/requests/" + encodeURIComponent(request.id) + "/" + action, { decisionNote });
                 const expected = action === "approve" ? "approved" : "rejected";
                 if (!result || !result.request || result.request.status !== expected) throw new Error("The server did not confirm the decision. Refresh to check the request status.");
                 toast("Request " + expected + ".", "success");
@@ -2197,7 +2281,7 @@
                     const actionsCell = document.createElement("td");
                     actionsCell.className = "td-actions";
 
-                    if (user.id !== state.user.id) {
+                    if (user.id !== state.user.id && user.role !== "admin") {
                         actionsCell.appendChild(
                             actionButton("Change role", "btn-action", () => openRoleModal(user))
                         );
@@ -2206,10 +2290,15 @@
                                 ? actionButton("Enable", "btn-action", () => confirmEnable(user))
                                 : actionButton("Disable", "btn-action danger", () => confirmDisable(user))
                         );
-                    } else {
+                    } else if (user.id === state.user.id) {
                         const note = document.createElement("span");
                         note.className = "you-marker";
                         note.textContent = "Your account";
+                        actionsCell.appendChild(note);
+                    } else {
+                        const note = document.createElement("span");
+                        note.className = "you-marker";
+                        note.textContent = "Protected Admin account";
                         actionsCell.appendChild(note);
                     }
 
@@ -2288,7 +2377,15 @@
         el("role-user-info").textContent =
             "Account: " + (user.name || "—") + " (" + (user.email || "—") + ")";
         el("role-current").value = roleLabel(user.role);
-        el("role-select").value = user.role === "admin" ? "admin" : user.role;
+
+        const select = el("role-select");
+        Array.from(select.options).forEach((option) => {
+            option.disabled = option.value === user.role;
+        });
+        select.value = user.role === "viewer" ? "document_owner" : "viewer";
+
+        el("role-reason").value = "";
+        setFieldError("role-reason", "role-reason-error", "");
         setMessage(el("role-error"), null);
         openModal("role-modal");
     }
@@ -2305,10 +2402,13 @@
                 " is signed out now and cannot sign in until an Admin enables the account. " +
                 "The action is recorded in the audit log.",
             confirmLabel: "Disable account",
-            onConfirm: async () => {
+            requireReason: true,
+            reasonLabel: "Reason for disabling this account",
+            onConfirm: async (reason) => {
                 try {
                     await api("PATCH", "/api/admin/users/" + encodeURIComponent(user.id) + "/disable", {
-                        disabled: true
+                        disabled: true,
+                        reason
                     });
                     closeModal("confirm-modal");
                     toast((user.name || user.email) + " was disabled.", "success");
@@ -2330,10 +2430,13 @@
                 " will be able to sign in again. Sessions that were ended when the account was " +
                 "disabled are not restored, so the user has to sign in again.",
             confirmLabel: "Enable account",
-            onConfirm: async () => {
+            requireReason: true,
+            reasonLabel: "Reason for enabling this account",
+            onConfirm: async (reason) => {
                 try {
                     await api("PATCH", "/api/admin/users/" + encodeURIComponent(user.id) + "/disable", {
-                        disabled: false
+                        disabled: false,
+                        reason
                     });
                     closeModal("confirm-modal");
                     toast((user.name || user.email) + " was enabled.", "success");
@@ -3466,12 +3569,21 @@
 
             const userId = el("role-user-id").value;
             const role = el("role-select").value;
+            const reason = el("role-reason").value;
             const button = el("role-save-btn");
+
+            const reasonError = validateReason(reason, "Reason");
+            if (reasonError) {
+                setFieldError("role-reason", "role-reason-error", reasonError);
+                return;
+            }
+            setFieldError("role-reason", "role-reason-error", "");
 
             await withBusy(button, async () => {
                 try {
                     await api("PATCH", "/api/admin/users/" + encodeURIComponent(userId) + "/role", {
-                        role
+                        role,
+                        reason: reason.trim()
                     });
                     closeModal("role-modal");
                     toast("The role was updated.", "success");
@@ -3576,6 +3688,14 @@
             await enterApp();
         } catch {
             showStoredSessionNotice();
+        }
+
+        // The public landing page links to /app?mode=register. Only switch
+        // when the authentication screen is visible; a signed-in account
+        // keeps the role-appropriate view that enterApp restored.
+        if (!state.user) {
+            const requestedMode = new URLSearchParams(window.location.search).get("mode");
+            if (requestedMode === "register") switchAuthTab("register");
         }
     }
 

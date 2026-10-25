@@ -74,18 +74,49 @@ async function getFileBuffer(storageKey) {
     return await fs.readFile(storagePath(storageKey));
 }
 
+/**
+ * Removes the file-system copy of a stored document.
+ *
+ * Returns an explicit result instead of swallowing the error so a caller can
+ * tell the user that a file may still be on disk. A missing file is treated as
+ * already removed; every other failure leaves the file in place and reports
+ * the operating-system error code (never the path or the file contents).
+ */
+async function removeStoredFile(storageKey) {
+    // The file system is only touched for a valid key. An invalid key was
+    // tampered with and could point outside the upload directory.
+    if (!isValidStorageKey(storageKey)) {
+        return { removed: false, reason: "invalid_storage_key" };
+    }
+
+    try {
+        await fs.unlink(storagePath(storageKey));
+        return { removed: true, reason: "removed" };
+    } catch (error) {
+        if (error.code === "ENOENT") {
+            return { removed: true, reason: "already_absent" };
+        }
+
+        return {
+            removed: false,
+            reason: typeof error.code === "string" ? error.code : "unlink_failed"
+        };
+    }
+}
+
+/**
+ * Best-effort removal used by upload/update rollback paths.
+ *
+ * The database row is removed first. The caller still owns whether a failed
+ * file-system removal is surfaced; document deletion uses `removeStoredFile`
+ * directly because its blob row is removed atomically with the document.
+ */
 async function deleteFile(storageKey, db = pool) {
     // The database row is removed unconditionally: the storage key is a
     // primary key, no file system path is built from it.
     await db.query("DELETE FROM document_blobs WHERE storage_key = $1", [storageKey]).catch(() => {});
 
-    // The file system is only touched for a valid key. An invalid key was
-    // tampered with and could point outside the upload directory.
-    if (!isValidStorageKey(storageKey)) {
-        return;
-    }
-
-    await fs.unlink(storagePath(storageKey)).catch(() => {});
+    return removeStoredFile(storageKey);
 }
 
 module.exports = {
@@ -93,6 +124,7 @@ module.exports = {
     saveTemporaryFile,
     getFileBuffer,
     deleteFile,
+    removeStoredFile,
     isValidStorageKey,
     STORAGE_DIR
 };

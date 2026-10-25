@@ -7,6 +7,10 @@ const config = require("../config");
 const { requireAuth } = require("../middleware/auth");
 const { writeAuditLog, lockAuditChain } = require("../services/auditService");
 const {
+    UserManagementError,
+    approveUpgrade
+} = require("../services/userManagementService");
+const {
     REQUEST_TYPES,
     OWNER_ROLE,
     getRequestPolicy,
@@ -444,11 +448,66 @@ async function listAdmin(req, res, { legacy = false } = {}) {
     }
 }
 
+/**
+ * Approval is a privileged role transition, so it runs through the same
+ * guarded account service as the Admin user editor. The administrator's
+ * reason is mandatory and is stored separately from the requester's original
+ * justification.
+ */
+async function approveRequest(req, res) {
+    const requestId = req.params.id;
+    if (!UUID_PATTERN.test(requestId)) {
+        return res.status(404).json({ message: "Request not found" });
+    }
+
+    try {
+        const result = await approveUpgrade({
+            req,
+            requestId,
+            approvalReason: (req.body || {}).decisionNote
+        });
+        const requester = result.user;
+        const reviewer = req.user;
+
+        return res.json({
+            message: "Request approved",
+            request: serializeRequest(
+                Object.assign({}, result.request, {
+                    requester_name: requester.name,
+                    requester_email: requester.email,
+                    requester_role: requester.role,
+                    requester_is_disabled: requester.is_disabled,
+                    decider_name: reviewer.name,
+                    decider_email: reviewer.email
+                }),
+                { includeDecisionActor: true }
+            ),
+            user: requester
+        });
+    } catch (error) {
+        if (error instanceof UserManagementError) {
+            return res.status(error.status).json({
+                message: error.message,
+                ...(error.code ? { code: error.code } : {})
+            });
+        }
+        console.error("Request approval failed:", error.message);
+        return res.status(500).json({
+            message: "The request decision could not be completed"
+        });
+    }
+}
+
 async function decide(req, res, decision) {
+    if (decision === "approved") {
+        return approveRequest(req, res);
+    }
+
     const requestId = req.params.id;
     if (!UUID_PATTERN.test(requestId)) return res.status(404).json({ message: "Request not found" });
 
-    const note = decision === "rejected" ? parseText((req.body || {}).decisionNote, "Decision note") : { value: null };
+    const rawNote = (req.body || {}).decisionNote;
+    const note = parseText(rawNote, "Decision note");
     if (note.error) return res.status(400).json({ message: note.error });
 
     const client = await pool.connect();
@@ -467,7 +526,7 @@ async function decide(req, res, decision) {
         }
 
         const found = await client.query(
-            `SELECT id, requester_id, request_type, requested_role,
+            `SELECT id, requester_id, request_type, requested_role, reason,
                     reviewer_role, reviewer_user_id, status
              FROM requests WHERE id = $1 FOR UPDATE`,
             [requestId]
@@ -580,8 +639,16 @@ async function decide(req, res, decision) {
             decidedBy: reviewer.id,
             decision,
             ...(decision === "approved"
-                ? { previousRole: requester.role, newRole: updatedUser.role }
-                : { roleUnchanged: true })
+                ? {
+                      previousRole: requester.role,
+                      newRole: updatedUser.role,
+                      reason: note.value,
+                      requesterReason: request.reason || null
+                  }
+                : {
+                      roleUnchanged: true,
+                      ...(note.value ? { reason: note.value } : {})
+                  })
         }, requester.id, client);
 
         await client.query("COMMIT");

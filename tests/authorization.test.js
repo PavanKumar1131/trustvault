@@ -29,6 +29,8 @@ const {
     countRows
 } = require("./helpers");
 
+const REASON = "Operational access change approved by an administrator.";
+
 describe("TrustVault authorization matrix", () => {
     const testRunId = Date.now().toString(36);
     const password = TEST_PASSWORD;
@@ -295,24 +297,34 @@ describe("TrustVault authorization matrix", () => {
 
     // ══════════════════════════════════════════════════════════════════════
     test("8. Role changes take effect without a new login", async () => {
-        // Promote the stranger to administrator and demote them again.
-        const promote = await agents.admin
-            .patch(`/api/admin/users/${users.stranger.id}/role`)
-            .send({ role: "admin" });
-        expect(promote.status).toBe(200);
-
-        // The session that was created as document_owner now has admin rights.
-        const adminUsers = await agents.stranger.get("/api/admin/users");
-        expect(adminUsers.status).toBe(200);
-
+        // Demote the Document Owner to Viewer, then promote them again.
         const demote = await agents.admin
             .patch(`/api/admin/users/${users.stranger.id}/role`)
-            .send({ role: "document_owner" });
+            .send({ role: "viewer", reason: REASON });
         expect(demote.status).toBe(200);
 
-        // The very same session loses the administrator rights immediately.
-        const afterDemotion = await agents.stranger.get("/api/admin/users");
+        // The very same session loses the Owner-only upload right immediately.
+        const afterDemotion = await agents.stranger
+            .post("/api/documents")
+            .field("name", `Matrix_Demoted_${testRunId}`)
+            .attach("file", VALID_PDF_BUFFER, "demoted.pdf");
         expect(afterDemotion.status).toBe(403);
+
+        // The account still never gains administrator rights.
+        const adminUsers = await agents.stranger.get("/api/admin/users");
+        expect(adminUsers.status).toBe(403);
+
+        const promote = await agents.admin
+            .patch(`/api/admin/users/${users.stranger.id}/role`)
+            .send({ role: "document_owner", reason: REASON });
+        expect(promote.status).toBe(200);
+
+        // The existing session regains the Owner-only upload right.
+        const afterPromotion = await agents.stranger
+            .post("/api/documents")
+            .field("name", `Matrix_Promoted_${testRunId}`)
+            .attach("file", VALID_PDF_BUFFER, "promoted.pdf");
+        expect(afterPromotion.status).toBe(201);
 
         // Database state: the role was persisted.
         const account = await fetchRow("users", "id = $1", [users.stranger.id]);

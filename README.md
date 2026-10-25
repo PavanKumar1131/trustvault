@@ -56,15 +56,17 @@ These credentials are intended exclusively for the isolated demonstration enviro
 - **Secure authentication**: Password hashing using bcrypt (12 rounds) and server-side session management.
 - **Role-based access control**: Separate Admin, Document Owner, and Viewer roles, with authorization enforced by the backend.
 - **Document ownership**: Owners can upload, manage, share, and delete their own documents.
-- **Validated file uploads**: Supports PDF, JPEG, and PNG files with server-side content validation.
+- **Global document search**: A text term matches document names and descriptions; owner, category, and created-date filters can be combined with or without a text term, always within the caller's authorization scope.
+- **Validated file uploads**: Supports PDF, JPEG, and PNG files with server-side magic-byte validation and a hard 5 MiB (5,242,880-byte) limit.
 - **Granular document sharing**: Owners can grant individual users read or edit permissions.
 - **Permission revocation**: Owners can revoke access, and authorization is checked against the current permission state.
 - **Persistent document storage**: Document binaries are stored in PostgreSQL (`document_blobs`), with a local write-through cache.
+- **Permanent document deletion**: Owner-only hard deletion removes metadata, grants, and the database blob in one transaction; audit history is retained. A failed post-commit filesystem cleanup is reported explicitly.
 - **Role-upgrade requests**: Viewers can request promotion to Document Owner for administrator review.
 - **Administrative dashboard**: Administrators can manage accounts, review requests, and inspect audit logs.
 - **Tamper-evident audit trail**: SHA-256 hash chaining and database triggers provide integrity checks and protect audit records against updates and deletions.
 - **Web security controls**: CSRF protection, Helmet security headers, Content Security Policy, rate limiting, input validation, and fail-closed authorization checks.
-- **Automated regression tests**: Jest and Supertest cover authentication, permissions, document workflows, migrations, and audit behavior.
+- **Automated regression tests**: Jest and Supertest cover authentication, permissions, document workflows, search filters, upload boundaries, deletion retention, concurrency, migrations, and audit behavior.
 
 ---
 
@@ -73,7 +75,7 @@ These credentials are intended exclusively for the isolated demonstration enviro
 | Component | Technology |
 |:---|:---|
 | **Runtime** | Node.js 20 or newer |
-| **Backend framework** | Express.js 4.x |
+| **Backend framework** | Express.js 5.x |
 | **Database** | PostgreSQL / Neon |
 | **Database client** | `pg` (node-postgres) |
 | **Authentication** | Express sessions and `bcrypt` |
@@ -142,9 +144,9 @@ Before running TrustVault locally, install:
 - **Node.js**: Version 20 or newer (`node --version`).
 - **PostgreSQL**: A local PostgreSQL server or a hosted PostgreSQL database.
 - **Git**: For source control and repository management.
-- **A dedicated test database**: A separate database whose name contains `test`, such as `trustvault_test`.
+- **A dedicated test database**: A local PostgreSQL database named exactly `trustvault_test` on a loopback host (`127.0.0.1`, `localhost`, or `::1`).
 
-The test suite uses database isolation safeguards to prevent accidental execution against development or production databases.
+The test suite uses a fail-closed database isolation guard. Before any migration or truncation it prints only the resolved host and database name, and it aborts unless the target is a loopback host and the database name is exactly `trustvault_test`.
 
 ---
 
@@ -256,7 +258,9 @@ TrustVault enforces role-based authorization and document-level permissions:
 - Document access is checked by the backend.
 - Administrators do not automatically receive private document access.
 - Sharing and revocation are scoped to the document owner's authorization.
-- Administrative role changes require appropriate authorization.
+- Account management supports only Viewer <-> Document Owner transitions. Admin accounts are protected from role and status changes, and an administrator cannot change their own role or status.
+- Every role or status change requires a 10-500 character reason and is recorded in the audit trail.
+- Demoting a Document Owner does not reassign document ownership. Instead, the demotion creates a Read grant for every document the account owns, so the former owner keeps only explicit read access and cannot rely on the ownership column for owner privileges.
 
 ---
 
@@ -265,29 +269,42 @@ TrustVault enforces role-based authorization and document-level permissions:
 ### 1. Document Upload
 Only users with the `document_owner` role can upload documents.
 The upload workflow includes:
-- Server-side validation of uploaded content.
-- Binary magic-number detection rather than reliance on file extensions alone.
-- Support for PDF, PNG, and JPEG files.
-- A maximum upload size of 5 MB per file.
+- Server-side validation of uploaded content using binary magic-number detection, not the file extension or client-supplied MIME type.
+- Support for PDF, PNG, and JPEG files only.
+- A hard maximum upload size of 5 MiB (5,242,880 bytes) per file; larger uploads are rejected with `413`.
 - Storage of document binaries in PostgreSQL's `document_blobs` table.
+- Storage of the content type detected from the file bytes. A valid file with a different allowed extension is accepted and typed by its content (for example, a PNG named `.pdf` is stored as `image/png`).
 - Audit logging for document upload actions.
 - Attempts by unauthorized roles to upload documents are rejected.
 
-### 2. Document Sharing
+The browser file picker also restricts the extension to `.pdf`, `.jpg`, `.jpeg`, and `.png`. The API deliberately treats content, not the extension, as authoritative; extension/content consistency is discussed as a residual risk in [`THREATS.md`](THREATS.md) (T-08).
+
+### 2. Search and Filtering
+The Search screen accepts any combination of the following filters:
+- **Text term (`q`)**: matches the document name or description. It does not match the category.
+- **Category**: exact match, case-insensitive.
+- **Owner**: matches the owner's name or email address.
+- **From / To dates**: filter on `created_at`. A date-only `to` value includes the whole UTC day.
+
+A category-only, owner-only, date-only, or combined search does not require a text term. The completely empty form shows guidance instead of listing every accessible document. Every search remains limited to documents the caller owns or has been granted, and pagination applies to filtered results.
+
+### 3. Document Sharing
 Owners can grant specific registered users read or edit access to a document.
 The application prevents self-grants and enforces authorization on the server. An edit permission allows the permitted document operations supported by the application, but does not automatically grant the ability to share the document, manage permissions, or delete it.
 
-### 3. Permission Revocation
+### 4. Permission Revocation
 Owners can revoke a user's document permissions.
 Access is evaluated against current database state, so a revoked user loses access to the affected document on subsequent requests.
 
-### 4. Document Deletion
-Only an authorized owner can delete an owned document. The application removes the associated document data and permission records through its supported deletion workflow and records a deletion audit event.
+### 5. Document Deletion
+Only an authorized owner can delete an owned document. Deletion is permanent; there is no restore endpoint or restore UI.
+The deletion workflow removes the document metadata, its cascaded permission grants, and its `document_blobs` row in one database transaction, and records a deletion audit event. Older audit entries and their hashes are retained unchanged.
+The file-system copy is removed after the transaction commits. If that unlink fails, the database deletion remains complete, the API returns `storageCleanup: "pending"` with a message that the stored file could not be removed, and an orphaned file may remain for operator cleanup. The application does not claim complete cleanup in that case.
 
-### 5. Role-Upgrade Requests
+### 6. Role-Upgrade Requests
 Viewers can request promotion to Document Owner through the application's request interface.
 Administrators can review requests and approve or reject them. Approval promotes the user to the requested role, subject to the application's authorization and transaction rules.
-Users cannot grant themselves elevated privileges.
+Users cannot grant themselves elevated privileges. Direct role changes resolve any pending upgrade request in the same transaction, and a Document Owner demotion creates the legacy Read grants described above.
 
 ---
 
@@ -314,20 +331,22 @@ npm test
 ```
 
 Tests must run against the isolated database configured by `TEST_DATABASE_URL`.
+The global setup prints only the resolved host and database name before any migration or truncation. The suite aborts unless the target is a loopback host (`127.0.0.1`, `localhost`, or `::1`) and the database name is exactly `trustvault_test`.
 
-The recorded test results in the project documentation for October 24–25, 2026, are:
-- **Test suites**: 15 passed
-- **Tests**: 407 passed
+The latest Phase 2 local verification on October 25, 2026 recorded:
+- **Test suites**: 19 passed
+- **Tests**: 448 passed
 - **Failures**: 0
-
-*(These are the project's previously recorded results, not a claim that tests were rerun while preparing this README).*
 
 The suite covers:
 - Authentication and session lifecycle
 - CSRF protection and security headers
-- Role boundaries and administrator permissions
-- Document CRUD and upload validation
+- Role boundaries, administrator permissions, and guarded account transitions
+- Document CRUD and upload validation, including JPEG/PNG handling and the exact 5 MiB boundary
 - Document sharing and permission revocation
+- Search filters with and without a text term, including owner, category, date, authorization scope, and pagination
+- Permanent deletion, audit retention, and explicit filesystem-cleanup reporting
+- Concurrency between account demotion/disable and security-sensitive writes
 - Role-upgrade requests and approval workflows
 - Database migrations and schema synchronization
 - Audit-chain verification and historical incident preservation
@@ -356,7 +375,10 @@ For high-volume production deployments, an object storage service such as Amazon
 - Account lockout counters are held in server-process memory. Multi-instance deployments require a shared store to keep lockout behavior consistent.
 - Hash chaining provides tamper evidence, but a sufficiently privileged database administrator may be able to rewrite records and recompute hashes.
 - Administrators do not automatically gain access to private document contents.
-- Demoting a Document Owner does not automatically reassign ownership of previously created documents.
+- Demoting a Document Owner does not reassign document ownership. The demotion creates a Read grant for every document the account owns; owner privileges additionally require the Document Owner role.
+- Document deletion is permanent and has no restore workflow. The database metadata, grants, and blob are removed atomically, but the post-commit filesystem unlink is best-effort. If it fails, an orphaned local file can remain and the API reports `storageCleanup: "pending"`; an operator must remove the orphan.
+- The API determines the stored file type from content rather than the filename extension. Extension/content consistency is not enforced server-side; the browser restricts the picker to the supported extensions. See T-08 in [`THREATS.md`](THREATS.md).
+- Search uses SQL `LIKE` predicates and has no dedicated full-text index. Large document collections may need an index or a dedicated search service.
 
 ---
 
@@ -364,12 +386,13 @@ For high-volume production deployments, an object storage service such as Amazon
 
 | Problem | Possible Cause | Resolution |
 |:---|:---|:---|
-| Test database safety check fails | `TEST_DATABASE_URL` points to a non-test database | Configure a dedicated database whose name contains `test`. |
+| Test database safety check fails | `TEST_DATABASE_URL` does not point at a loopback host and the exact database `trustvault_test` | Use a local PostgreSQL database named exactly `trustvault_test`; do not point the suite at development, production, or hosted databases. |
 | A required table does not exist | Migrations have not been applied | Check the database target, then run `npm run migrate` in the appropriate environment. |
 | Request rejected with a CSRF error | Missing or invalid CSRF token | Obtain a token using the application's CSRF-token endpoint and submit it using the expected header. |
 | Login attempts are rate-limited | Rate limiter or account lockout is active | Follow the configured lockout policy and retry after the applicable interval. |
 | Audit verifier reports a documented incident | Historical incident `INC-2026-438` | Consult [`docs/AUDIT.md`](docs/AUDIT.md); do not rewrite historical audit records. |
 | A viewer cannot open a document | No valid sharing permission exists, or permission was revoked | Verify the document owner and current permission grant. |
+| Deletion response reports `storageCleanup: "pending"` | The database deletion committed, but the local file unlink failed | The document is permanently deleted from the database. Locate the orphaned file in the configured upload directory and remove it with filesystem tooling; no restore is available. |
 
 ---
 

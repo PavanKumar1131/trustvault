@@ -26,8 +26,9 @@ function cleanFilter(value) {
 async function listAccessibleDocuments(userId, filters = {}) {
     const params = [userId];
     const whereClauses = [
+        "account.is_disabled = false",
         "(" +
-        "d.owner_id = $1 " +
+        "(account.role = 'document_owner' AND d.owner_id = $1) " +
         "OR EXISTS (" +
         "SELECT 1 FROM document_permissions dp " +
         "WHERE dp.document_id = d.id AND dp.user_id = $1 " +
@@ -50,7 +51,7 @@ async function listAccessibleDocuments(userId, filters = {}) {
     // screen, so that the screen can be paginated by the database instead of
     // by slicing the client's copy of the list.
     if (filters.owned === true) {
-        whereClauses.push("d.owner_id = $1");
+        whereClauses.push("account.role = 'document_owner' AND d.owner_id = $1");
     }
 
     const searchName = cleanFilter(filters.q) || cleanFilter(filters.name);
@@ -124,11 +125,12 @@ async function listAccessibleDocuments(userId, filters = {}) {
         "(SELECT MAX(dp.created_at) FROM document_permissions dp " +
         " WHERE dp.document_id = d.id AND dp.user_id = $1) AS shared_at, " +
         "CASE " +
-        "WHEN d.owner_id = $1 THEN 'owner' " +
+        "WHEN account.role = 'document_owner' AND d.owner_id = $1 THEN 'owner' " +
         "WHEN EXISTS (SELECT 1 FROM document_permissions dp WHERE dp.document_id = d.id AND dp.user_id = $1 AND dp.permission = 'edit') THEN 'edit' " +
         "ELSE 'read' END AS access_level " +
         "FROM documents d " +
         "JOIN users u ON u.id = d.owner_id " +
+        "JOIN users account ON account.id = $1 " +
         "WHERE " + whereClauses.join(" AND ") + " " +
         "ORDER BY d.created_at DESC " +
         "LIMIT " + limitIdx + " OFFSET " + offsetIdx;
@@ -161,7 +163,8 @@ async function getDocumentAccess(documentId, userId) {
               WHERE dp.document_id = d.id
                 AND dp.user_id = $2) AS shared_at,
             CASE
-                WHEN d.owner_id = $2 THEN 'owner'
+                WHEN account.role = 'document_owner'
+                 AND d.owner_id = $2 THEN 'owner'
                 WHEN EXISTS (
                     SELECT 1
                     FROM document_permissions dp
@@ -173,9 +176,11 @@ async function getDocumentAccess(documentId, userId) {
             END AS access_level
          FROM documents d
          JOIN users u ON u.id = d.owner_id
+         JOIN users account ON account.id = $2
          WHERE d.id = $1
+           AND account.is_disabled = false
            AND (
-                d.owner_id = $2
+                (account.role = 'document_owner' AND d.owner_id = $2)
                 OR EXISTS (
                     SELECT 1
                     FROM document_permissions dp
